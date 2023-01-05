@@ -1,0 +1,4061 @@
+diff --git a/compiler/GHC/Driver/CodeOutput.hs b/compiler/GHC/Driver/CodeOutput.hs
+index 66e5e69d21..8c990b16cb 100644
+--- a/compiler/GHC/Driver/CodeOutput.hs
++++ b/compiler/GHC/Driver/CodeOutput.hs
+@@ -199,15 +199,6 @@ outputLlvm logger dflags filenm cmm_stream =
+ ************************************************************************
+ -}
+ 
+-{-
+-Note [Packaging libffi headers]
+-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-The C code emitted by GHC for libffi adjustors must depend upon the ffi_arg type,
+-defined in <ffi.h>. For this reason, we must ensure that <ffi.h> is available
+-in binary distributions. To do so, we install these headers as part of the
+-`rts` package.
+--}
+-
+ outputForeignStubs
+     :: Logger
+     -> TmpFs
+diff --git a/compiler/GHC/Unit/Info.hs b/compiler/GHC/Unit/Info.hs
+index 591f488ed7..f88a9ea94b 100644
+--- a/compiler/GHC/Unit/Info.hs
++++ b/compiler/GHC/Unit/Info.hs
+@@ -249,7 +249,7 @@ unitHsLibs namever ways0 p = map (mkDynName . addSuffix . ST.unpack) (unitLibrar
+         -- and handling specifically for the `rts` package for
+         -- example in ghc-cabal.
+         addSuffix rts@"HSrts"       = rts       ++ (expandTag rts_tag)
+-        addSuffix rts@"HSrts-1.0.2" = rts       ++ (expandTag rts_tag)
++        addSuffix rts@"HSrts-1.0.1" = rts       ++ (expandTag rts_tag)
+         addSuffix other_lib         = other_lib ++ (expandTag tag)
+ 
+         expandTag t | null t = ""
+diff --git a/configure.ac b/configure.ac
+index 18a39591f1..85ef9d4c21 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1054,12 +1054,10 @@ AC_ARG_WITH([system-libffi],
+ ])
+ 
+ AS_IF([test "x$with_system_libffi" = "xyes"],
+-  [UseSystemLibFFI="YES"; CabalUseSystemLibFFI="True"],
+-  [UseSystemLibFFI="NO"; CabalUseSystemLibFFI="False"]
++  [UseSystemLibFFI="YES"], [UseSystemLibFFI="NO"]
+ )
+ 
+ AC_SUBST(UseSystemLibFFI)
+-AC_SUBST(CabalUseSystemLibFFI)
+ 
+ AC_ARG_WITH([ffi-includes],
+ [AS_HELP_STRING([--with-ffi-includes=ARG],
+@@ -1090,6 +1088,7 @@ AC_ARG_WITH([ffi-libraries],
+ 
+ AC_SUBST(FFILibDir)
+ 
++AC_SUBST([CabalHaveLibffi],[False])
+ AS_IF([test "$UseSystemLibFFI" = "YES"], [
+  CFLAGS2="$CFLAGS"
+  CFLAGS="$LIBFFI_CFLAGS $CFLAGS"
+@@ -1106,7 +1105,8 @@ AS_IF([test "$UseSystemLibFFI" = "YES"], [
+  fi
+  AC_CHECK_LIB(ffi, ffi_call,
+   [AC_CHECK_HEADERS([ffi.h], [break], [])
+-   AC_DEFINE([HAVE_SYSTEM_LIBFFI], [1], [Define to 1 if you have libffi.])],
++   AC_DEFINE([HAVE_LIBFFI], [1], [Define to 1 if you have libffi.])]
++   AC_SUBST([CabalHaveLibffi],[True]),
+   [AC_MSG_ERROR([Cannot find system libffi])])
+  CFLAGS="$CFLAGS2"
+  LDFLAGS="$LDFLAGS2"
+@@ -1253,60 +1253,6 @@ case ${TargetOS} in
+ AC_DEFINE_UNQUOTED([RTS_LINKER_USE_MMAP], [$RtsLinkerUseMmap],
+                    [Use mmap in the runtime linker])
+ 
+-
+-dnl ** Use libffi for adjustors?
+-dnl --------------------------------------------------------------
+-
+-case ${TargetArch} in
+-    i386|x86_64)
+-        # We have native adjustor support on these platforms
+-        HaveNativeAdjustor=yes
+-        ;;
+-    *)
+-        HaveNativeAdjustor=no
+-        ;;
+-esac
+-
+-AC_ARG_ENABLE(libffi-adjustors,
+-    [AS_HELP_STRING(
+-        [--enable-libffi-adjustors],
+-        [Force use of libffi for adjustors, even on platforms which have support for more efficient, native adjustors.])],
+-    UseLibffiForAdjustors=$enableval,
+-    dnl do nothing
+-)
+-
+-AC_MSG_CHECKING([whether to use libffi for adjustors])
+-AC_MSG_RESULT([$UseLibffiForAdjustors])
+-if test "$UseLibffiForAdjustors" = "yes" ; then
+-    # Use libffi is the user explicitly requested it
+-    AdjustorType="libffi"
+-elif test "$HaveNativeAdjustor" = "yes"; then
+-    # Otherwise if we have a native adjustor implementation use that
+-    AdjustorType="native"
+-else
+-    # If we don't have a native adjustor implementation then default to libffi
+-    AdjustorType="libffi"
+-fi
+-
+-case "$AdjustorType" in
+-libffi)
+-    CabalLibffiAdjustors=True
+-    UseLibffiForAdjustors=YES
+-    ;;
+-native)
+-    CabalLibffiAdjustors=False
+-    UseLibffiForAdjustors=NO
+-    ;;
+-*)
+-    AC_MSG_ERROR([Internal error: Invalid AdjustorType])
+-    exit 1
+-esac
+-
+-AC_SUBST([CabalLibffiAdjustors])
+-AC_SUBST([UseLibffiForAdjustors])
+-
+-dnl ** Other RTS features
+-dnl --------------------------------------------------------------
+ FP_FIND_LIBDW
+ FP_FIND_LIBNUMA
+ 
+diff --git a/distrib/configure.ac.in b/distrib/configure.ac.in
+index e91bf1aa74..bc0e00bd40 100644
+--- a/distrib/configure.ac.in
++++ b/distrib/configure.ac.in
+@@ -33,9 +33,6 @@ LibdwLibDir=@LibdwLibDir@
+ AC_SUBST(LibdwLibDir)
+ AC_SUBST(LibdwIncludeDir)
+ 
+-UseLibffiForAdjustors=@UseLibffiForAdjustors@
+-AC_SUBST(UseLibffiForAdjustors)
+-
+ # We have to run these unconditionally as FPTOOLS_SET_PLATFORM_VARS wants the
+ # values it computes.
+ AC_CANONICAL_BUILD
+diff --git a/hadrian/cfg/system.config.in b/hadrian/cfg/system.config.in
+index cd6ae30830..19dab2ffb3 100644
+--- a/hadrian/cfg/system.config.in
++++ b/hadrian/cfg/system.config.in
+@@ -48,7 +48,6 @@ hs-cpp-args         = @HaskellCPPArgs@
+ solaris-broken-shld  = @SOLARIS_BROKEN_SHLD@
+ ghc-unregisterised   = @Unregisterised@
+ tables-next-to-code  = @TablesNextToCode@
+-use-libffi-for-adjustors = @UseLibffiForAdjustors@
+ ghc-source-path      = @hardtop@
+ leading-underscore   = @LeadingUnderscore@
+ 
+diff --git a/hadrian/src/Oracles/Flag.hs b/hadrian/src/Oracles/Flag.hs
+index 0ca8d14c4f..86521e4aa8 100644
+--- a/hadrian/src/Oracles/Flag.hs
++++ b/hadrian/src/Oracles/Flag.hs
+@@ -2,7 +2,7 @@
+ 
+ module Oracles.Flag (
+     Flag (..), flag, getFlag, platformSupportsSharedLibs,
+-    targetSupportsSMP, useLibffiForAdjustors
++    targetSupportsSMP
+     ) where
+ 
+ import Hadrian.Oracles.TextFile
+@@ -26,7 +26,6 @@ data Flag = ArSupportsAtFile
+           | UseSystemFfi
+           | BootstrapThreadedRts
+           | SystemDistroMINGW
+-          | UseLibffiForAdjustors
+ 
+ -- Note, if a flag is set to empty string we treat it as set to NO. This seems
+ -- fragile, but some flags do behave like this.
+@@ -48,7 +47,6 @@ flag f = do
+             UseSystemFfi         -> "use-system-ffi"
+             BootstrapThreadedRts -> "bootstrap-threaded-rts"
+             SystemDistroMINGW    -> "system-use-distro-mingw"
+-            UseLibffiForAdjustors -> "use-libffi-for-adjustors"
+     value <- lookupValueOrError configFile key
+     when (value `notElem` ["YES", "NO", ""]) . error $ "Configuration flag "
+         ++ quote (key ++ " = " ++ value) ++ " cannot be parsed."
+@@ -81,6 +79,3 @@ targetSupportsSMP = do
+      , ver < ARMv7          -> return False
+      | goodArch             -> return True
+      | otherwise            -> return False
+-
+-useLibffiForAdjustors :: Action Bool
+-useLibffiForAdjustors = flag UseLibffiForAdjustors
+diff --git a/hadrian/src/Oracles/Setting.hs b/hadrian/src/Oracles/Setting.hs
+index c10e3fc44d..4ffef42165 100644
+--- a/hadrian/src/Oracles/Setting.hs
++++ b/hadrian/src/Oracles/Setting.hs
+@@ -14,7 +14,7 @@ module Oracles.Setting (
+     isElfTarget,
+     ArmVersion(..),
+     targetArmVersion,
+-    ghcWithInterpreter
++    ghcWithInterpreter, useLibFFIForAdjustors
+     ) where
+ 
+ import Hadrian.Expression
+@@ -277,6 +277,10 @@ ghcWithInterpreter = do
+                               , "powerpc64", "powerpc64le" ]
+     return $ goodOs && goodArch
+ 
++-- | Check to use @libffi@ for adjustors.
++useLibFFIForAdjustors :: Action Bool
++useLibFFIForAdjustors = notM $ anyTargetArch ["i386", "x86_64"]
++
+ -- | Variants of the ARM architecture.
+ data ArmVersion = ARMv5 | ARMv6 | ARMv7
+                 deriving (Eq, Ord, Show, Read)
+diff --git a/hadrian/src/Rules/Generate.hs b/hadrian/src/Rules/Generate.hs
+index 048a75dc77..f91864a1ff 100644
+--- a/hadrian/src/Rules/Generate.hs
++++ b/hadrian/src/Rules/Generate.hs
+@@ -50,9 +50,8 @@ compilerDependencies = do
+     ghcPath <- expr $ buildPath (vanillaContext stage compiler)
+     rtsPath <- expr (rtsBuildPath stage)
+     libDir <- expr $ stageLibPath stage
+-    useSystemFfi <- expr (flag UseSystemFfi)
+     mconcat [ return $ (libDir -/-) <$> derivedConstantsFiles
+-            , notStage0 ? not useSystemFfi ? return ((rtsPath -/-) <$> libffiHeaderFiles)
++            , notStage0 ? return ((rtsPath -/-) <$> libffiHeaderFiles)
+             , return $ fmap (ghcPath -/-)
+                   [ "primop-can-fail.hs-incl"
+                   , "primop-code-size.hs-incl"
+@@ -77,12 +76,11 @@ generatedDependencies :: Expr [FilePath]
+ generatedDependencies = do
+     stage    <- getStage
+     rtsPath  <- expr (rtsBuildPath stage)
+-    useSystemFfi <- expr (flag UseSystemFfi)
+     includes <- expr $ includesDependencies stage
+     libDir <- expr $ stageLibPath stage
+     mconcat [ package compiler ? compilerDependencies
+             , package ghcPrim  ? ghcPrimDependencies
+-            , package rts      ? return ((if useSystemFfi then pure [] else fmap (rtsPath -/-) libffiHeaderFiles)
++            , package rts      ? return (fmap (rtsPath -/-) libffiHeaderFiles
+                 ++ includes
+                 ++ ((libDir -/-) <$> derivedConstantsFiles))
+             , stage0 ? return includes ]
+@@ -341,7 +339,7 @@ generateSettings = do
+         , ("RTS ways", unwords . map show <$> getRtsWays)
+         , ("Tables next to code", expr $ yesNo <$> flag TablesNextToCode)
+         , ("Leading underscore", expr $ yesNo <$> flag LeadingUnderscore)
+-        , ("Use LibFFI", expr $ yesNo <$> useLibffiForAdjustors)
++        , ("Use LibFFI", expr $ yesNo <$> useLibFFIForAdjustors)
+         , ("RTS expects libdw", yesNo <$> getFlag WithLibdw)
+         ]
+     let showTuple (k, v) = "(" ++ show k ++ ", " ++ show v ++ ")"
+diff --git a/hadrian/src/Rules/Libffi.hs b/hadrian/src/Rules/Libffi.hs
+index 659c75886b..86238c30a4 100644
+--- a/hadrian/src/Rules/Libffi.hs
++++ b/hadrian/src/Rules/Libffi.hs
+@@ -95,9 +95,6 @@ libffiName' dynamic = (if dynamic     then ""      else "C")
+ libffiLibrary :: FilePath
+ libffiLibrary = "inst/lib/libffi.a"
+ 
+--- | These are the headers that we must package with GHC since foreign export
+--- adjustor code produced by GHC depends upon them.
+--- See Note [Packaging libffi headers] in GHC.Driver.CodeOutput.
+ libffiHeaderFiles :: [FilePath]
+ libffiHeaderFiles = ["ffi.h", "ffitarget.h"]
+ 
+diff --git a/hadrian/src/Rules/Rts.hs b/hadrian/src/Rules/Rts.hs
+index 746eedcf1b..4583f06d51 100644
+--- a/hadrian/src/Rules/Rts.hs
++++ b/hadrian/src/Rules/Rts.hs
+@@ -26,7 +26,6 @@ rtsRules = priority 3 $ do
+         let buildPath = root -/- buildDir (rtsContext stage)
+ 
+         -- Header files
+-        -- See Note [Packaging libffi headers] in GHC.Driver.CodeOutput.
+         (fmap (buildPath -/-) libffiHeaderFiles) &%> const (copyLibffiHeaders stage)
+ 
+         -- Static libraries.
+@@ -44,7 +43,6 @@ withLibffi stage action = needLibffi stage
+ 
+ -- | Copy all header files wither from the system libffi or from the libffi
+ -- build dir to the rts build dir.
+--- See Note [Packaging libffi headers] in GHC.Driver.CodeOutput.
+ copyLibffiHeaders :: Stage -> Action ()
+ copyLibffiHeaders stage = do
+     rtsPath      <- rtsBuildPath stage
+@@ -118,8 +116,11 @@ needRtsLibffiTargets stage = do
+     rtsPath      <- rtsBuildPath stage
+     useSystemFfi <- flag UseSystemFfi
+ 
++    -- Header files (in the rts build dir).
++    let headers = fmap (rtsPath -/-) libffiHeaderFiles
++
+     if useSystemFfi
+-    then return []
++    then return headers
+     else do
+         -- Need Libffi
+         -- This returns the dynamic library files (in the Libffi build dir).
+@@ -154,7 +155,7 @@ needRtsSymLinks stage rtsWays
+ 
+ prefix, versionlessPrefix :: String
+ versionlessPrefix = "libHSrts"
+-prefix = versionlessPrefix ++ "-1.0.2"
++prefix = versionlessPrefix ++ "-1.0.1"
+ 
+ -- removeRtsDummyVersion "a/libHSrts-1.0-ghc1.2.3.4.so"
+ --                    == "a/libHSrts-ghc1.2.3.4.so"
+diff --git a/hadrian/src/Settings/Packages.hs b/hadrian/src/Settings/Packages.hs
+index 7848eb63a4..346472f410 100644
+--- a/hadrian/src/Settings/Packages.hs
++++ b/hadrian/src/Settings/Packages.hs
+@@ -24,8 +24,6 @@ packageArgs = do
+ 
+     cursesIncludeDir <- getSetting CursesIncludeDir
+     cursesLibraryDir <- getSetting CursesLibDir
+-    ffiIncludeDir  <- getSetting FfiIncludeDir
+-    ffiLibraryDir  <- getSetting FfiLibDir
+ 
+     mconcat
+         --------------------------------- base ---------------------------------
+@@ -134,8 +132,7 @@ packageArgs = do
+           -- the Stage1 libraries, as we already know that the bootstrap
+           -- compiler comes with the same versions as the one we are building.
+           --
+-            builder (Cabal Setup) ? cabalExtraDirs ffiIncludeDir ffiLibraryDir
+-          , builder (Cabal Flags) ? ifM stage0
++            builder (Cabal Flags) ? ifM stage0
+               (andM [cross, bootCross] `cabalFlag` "internal-interpreter")
+               (arg "internal-interpreter")
+ 
+@@ -252,7 +249,7 @@ rtsPackageArgs = package rts ? do
+     way            <- getWay
+     path           <- getBuildPath
+     top            <- expr topDirectory
+-    useSystemFfi   <- expr $ flag UseSystemFfi
++    libffiName     <- expr libffiLibraryName
+     ffiIncludeDir  <- getSetting FfiIncludeDir
+     ffiLibraryDir  <- getSetting FfiLibDir
+     libdwIncludeDir   <- getSetting LibdwIncludeDir
+@@ -279,6 +276,8 @@ rtsPackageArgs = package rts ? do
+ 
+     let cArgs = mconcat
+           [ rtsWarnings
++          , flag UseSystemFfi ? not (null ffiIncludeDir) ? arg ("-I" ++ ffiIncludeDir)
++          , flag WithLibdw ? not (null libdwIncludeDir) ? arg ("-I" ++ libdwIncludeDir)
+           , arg "-fomit-frame-pointer"
+           -- RTS *must* be compiled with optimisations. The INLINE_HEADER macro
+           -- requires that functions are inlined to work as expected. Inlining
+@@ -297,6 +296,8 @@ rtsPackageArgs = package rts ? do
+                                                     , "-g3"
+                                                     , "-O0" ]
+ 
++          , useLibFFIForAdjustors            ? arg "-DUSE_LIBFFI_FOR_ADJUSTORS"
++
+           , inputs ["**/RtsMessages.c", "**/Trace.c"] ?
+             arg ("-DProjectVersion=" ++ show projectVersion)
+ 
+@@ -365,14 +366,11 @@ rtsPackageArgs = package rts ? do
+           , any (wayUnit Debug) rtsWays     `cabalFlag` "debug"
+           , any (wayUnit Logging) rtsWays   `cabalFlag` "logging"
+           , any (wayUnit Dynamic) rtsWays   `cabalFlag` "dynamic"
+-          , useSystemFfi                    `cabalFlag` "use-system-libffi"
+-          , useLibffiForAdjustors           `cabalFlag` "libffi-adjustors"
+           , Debug `wayUnit` way             `cabalFlag` "find-ptr"
+           ]
+         , builder (Cabal Setup) ? mconcat
+               [ cabalExtraDirs libdwIncludeDir libdwLibraryDir
+               , cabalExtraDirs libnumaIncludeDir libnumaLibraryDir
+-              , useSystemFfi ? cabalExtraDirs ffiIncludeDir ffiLibraryDir
+               ]
+         , builder (Cc (FindCDependencies CDep)) ? cArgs
+         , builder (Cc (FindCDependencies CxxDep)) ? cArgs
+@@ -381,7 +379,11 @@ rtsPackageArgs = package rts ? do
+         , builder Ghc ? ghcArgs
+ 
+         , builder HsCpp ? pure
+-          [ "-DTOP="             ++ show top ]
++          [ "-DTOP="             ++ show top
++          , "-DFFI_INCLUDE_DIR=" ++ show ffiIncludeDir
++          , "-DFFI_LIB_DIR="     ++ show ffiLibraryDir
++          , "-DFFI_LIB="         ++ show libffiName
++          , "-DLIBDW_LIB_DIR="   ++ show libdwLibraryDir ]
+ 
+         , builder HsCpp ? flag WithLibdw ? arg "-DUSE_LIBDW"
+         , builder HsCpp ? flag HaveLibMingwEx ? arg "-DHAVE_LIBMINGWEX" ]
+diff --git a/includes/Rts.h b/includes/Rts.h
+index b2c74fcfc1..20d4a043ce 100644
+--- a/includes/Rts.h
++++ b/includes/Rts.h
+@@ -235,7 +235,6 @@ void _warnFail(const char *filename, unsigned int linenum);
+ #include "rts/ForeignExports.h"
+ 
+ /* Other RTS external APIs */
+-#include "rts/ExecPage.h"
+ #include "rts/Parallel.h"
+ #include "rts/Signals.h"
+ #include "rts/BlockSignals.h"
+diff --git a/includes/ghc.mk b/includes/ghc.mk
+index 31d7a17f2a..96684217c9 100644
+--- a/includes/ghc.mk
++++ b/includes/ghc.mk
+@@ -258,7 +258,7 @@ $(includes_SETTINGS) : includes/Makefile | $$(dir $$@)/.
+ 	@echo ',("RTS ways", "$(GhcRTSWays)")' >> $@
+ 	@echo ',("Tables next to code", "$(TablesNextToCode)")' >> $@
+ 	@echo ',("Leading underscore", "$(LeadingUnderscore)")' >> $@
+-	@echo ',("Use LibFFI", "$(UseLibffiForAdjustors)")' >> $@
++	@echo ',("Use LibFFI", "$(UseLibFFIForAdjustors)")' >> $@
+ 	@echo ",(\"RTS expects libdw\", \"$(GhcRtsWithLibdw)\")" >> $@
+ 	@echo "]" >> $@
+ 
+diff --git a/includes/rts/ExecPage.h b/includes/rts/ExecPage.h
+deleted file mode 100644
+index 4261b71259..0000000000
+--- a/includes/rts/ExecPage.h
++++ /dev/null
+@@ -1,18 +0,0 @@
+-/*
+- * Utilities for managing dynamically-allocated executable pages.
+- */
+-
+-#pragma once
+-
+-typedef struct {
+-    char contents;
+-} ExecPage;
+-
+-/* Allocate a writable page. */
+-ExecPage *allocateExecPage(void);
+-
+-/* Make a page previously allocated by allocateExecPage. */
+-void freezeExecPage(ExecPage *page);
+-
+-/* Free a page previously allocated by allocateExecPage. */
+-void freeExecPage(ExecPage *page);
+diff --git a/includes/rts/storage/GC.h b/includes/rts/storage/GC.h
+index 478503aaee..0258811728 100644
+--- a/includes/rts/storage/GC.h
++++ b/includes/rts/storage/GC.h
+@@ -203,7 +203,17 @@ StgPtr  allocatePinned    ( Capability *cap, W_ n, W_ alignment, W_ align_off);
+ typedef void* AdjustorWritable;
+ typedef void* AdjustorExecutable;
+ 
++AdjustorWritable allocateExec(W_ len, AdjustorExecutable *exec_addr);
+ void flushExec(W_ len, AdjustorExecutable exec_addr);
++#if defined(darwin_HOST_OS)
++AdjustorWritable execToWritable(AdjustorExecutable exec);
++#endif
++#if RTS_LINKER_USE_MMAP
++AdjustorWritable allocateWrite(W_ bytes);
++void markExec(W_ bytes, AdjustorWritable writ);
++void freeWrite(W_ bytes, AdjustorWritable writ);
++#endif
++void             freeExec (AdjustorExecutable p);
+ 
+ // Used by GC checks in external .cmm code:
+ extern W_ large_alloc_lim;
+diff --git a/libraries/ghci/GHCi/InfoTable.hsc b/libraries/ghci/GHCi/InfoTable.hsc
+index 1fadefdb57..fce2c653f2 100644
+--- a/libraries/ghci/GHCi/InfoTable.hsc
++++ b/libraries/ghci/GHCi/InfoTable.hsc
+@@ -37,8 +37,8 @@ mkConInfoTable
+    -> Int     -- pointer tag
+    -> ByteString  -- con desc
+    -> IO (Ptr StgInfoTable)
+-      -- resulting info table is allocated with allocateExecPage(), and
+-      -- should be freed with freeExecPage().
++      -- resulting info table is allocated with allocateExec(), and
++      -- should be freed with freeExec().
+ 
+ mkConInfoTable tables_next_to_code ptr_words nonptr_words tag ptrtag con_desc = do
+   let entry_addr = interpConstrEntry !! ptrtag
+@@ -317,18 +317,28 @@ sizeOfEntryCode tables_next_to_code
+ 
+ -- Note: Must return proper pointer for use in a closure
+ newExecConItbl :: Bool -> StgInfoTable -> ByteString -> IO (FunPtr ())
+-newExecConItbl tables_next_to_code obj con_desc = do
+-    sz0 <- sizeOfEntryCode tables_next_to_code
+-    let lcon_desc = BS.length con_desc + 1{- null terminator -}
+-        -- SCARY
+-        -- This size represents the number of bytes in an StgConInfoTable.
+-        sz = fromIntegral $ conInfoTableSizeB + sz0
+-            -- Note: we need to allocate the conDesc string next to the info
+-            -- table, because on a 64-bit platform we reference this string
+-            -- with a 32-bit offset relative to the info table, so if we
+-            -- allocated the string separately it might be out of range.
+-
+-    ex_ptr <- fillExecBuffer (sz + fromIntegral lcon_desc) $ \wr_ptr ex_ptr -> do
++newExecConItbl tables_next_to_code obj con_desc
++#if RTS_LINKER_USE_MMAP && MIN_VERSION_rts(1,0,1)
++   = do
++#else
++   = alloca $ \pcode -> do
++#endif
++        sz0 <- sizeOfEntryCode tables_next_to_code
++        let lcon_desc = BS.length con_desc + 1{- null terminator -}
++            -- SCARY
++            -- This size represents the number of bytes in an StgConInfoTable.
++            sz = fromIntegral $ conInfoTableSizeB + sz0
++               -- Note: we need to allocate the conDesc string next to the info
++               -- table, because on a 64-bit platform we reference this string
++               -- with a 32-bit offset relative to the info table, so if we
++               -- allocated the string separately it might be out of range.
++#if RTS_LINKER_USE_MMAP && MIN_VERSION_rts(1,0,1)
++        wr_ptr <- _allocateWrite (sz + fromIntegral lcon_desc)
++        let ex_ptr = wr_ptr
++#else
++        wr_ptr <- _allocateExec (sz + fromIntegral lcon_desc) pcode
++        ex_ptr <- peek pcode
++#endif
+         let cinfo = StgConInfoTable { conDesc = ex_ptr `plusPtr` fromIntegral sz
+                                     , infoTable = obj }
+         pokeConItbl tables_next_to_code wr_ptr ex_ptr cinfo
+@@ -336,37 +346,13 @@ newExecConItbl tables_next_to_code obj con_desc = do
+             copyBytes (castPtr wr_ptr `plusPtr` fromIntegral sz) src len
+         let null_off = fromIntegral sz + fromIntegral (BS.length con_desc)
+         poke (castPtr wr_ptr `plusPtr` null_off) (0 :: Word8)
+-
+-    pure $ if tables_next_to_code
+-      then castPtrToFunPtr $ ex_ptr `plusPtr` conInfoTableSizeB
+-      else castPtrToFunPtr ex_ptr
+-
+--- | Allocate a buffer of a given size, use the given action to fill it with
+--- data, and mark it as executable. The action is given a writable pointer and
+--- the executable pointer. Returns a pointer to the executable code.
+-fillExecBuffer :: CSize -> (Ptr a -> Ptr a -> IO ()) -> IO (Ptr a)
+-
+-#if MIN_VERSION_rts(1,0,2)
+-
+-data ExecPage
+-
+-foreign import ccall unsafe "allocateExecPage"
+-  _allocateExecPage :: IO (Ptr ExecPage)
+-
+-foreign import ccall unsafe "freezeExecPage"
+-  _freezeExecPage :: Ptr ExecPage -> IO ()
+-
+-fillExecBuffer sz cont
+-    -- we can only allocate single pages. This assumes a 4k page size which
+-    -- isn't strictly correct but is a reasonable conservative lower bound.
+-  | sz > 4096 = fail "withExecBuffer: Too large"
+-  | otherwise = do
+-        pg <- _allocateExecPage
+-        cont (castPtr pg) (castPtr pg)
+-        _freezeExecPage pg
+-        return (castPtr pg)
+-
+-#elif MIN_VERSION_rts(1,0,1)
++        _flushExec sz ex_ptr -- Cache flush (if needed)
++#if RTS_LINKER_USE_MMAP && MIN_VERSION_rts(1,0,1)
++        _markExec (sz + fromIntegral lcon_desc) ex_ptr
++#endif
++        pure $ if tables_next_to_code
++          then castPtrToFunPtr $ ex_ptr `plusPtr` conInfoTableSizeB
++          else castPtrToFunPtr ex_ptr
+ 
+ foreign import ccall unsafe "allocateExec"
+   _allocateExec :: CUInt -> Ptr (Ptr a) -> IO (Ptr a)
+@@ -374,19 +360,12 @@ foreign import ccall unsafe "allocateExec"
+ foreign import ccall unsafe "flushExec"
+   _flushExec :: CUInt -> Ptr a -> IO ()
+ 
+-fillExecBuffer sz cont = alloca $ \pcode -> do
+-    wr_ptr <- _allocateExec (fromIntegral sz) pcode
+-    ex_ptr <- peek pcode
+-    cont wr_ptr ex_ptr
+-    _flushExec (fromIntegral sz) ex_ptr -- Cache flush (if needed)
+-    return (ex_ptr)
+-
+-#else
+-
+-#error hi
+-
++#if RTS_LINKER_USE_MMAP && MIN_VERSION_rts(1,0,1)
++foreign import ccall unsafe "allocateWrite"
++  _allocateWrite :: CUInt -> IO (Ptr a)
++foreign import ccall unsafe "markExec"
++  _markExec :: CUInt -> Ptr a -> IO ()
+ #endif
+-
+ -- -----------------------------------------------------------------------------
+ -- Constants and config
+ 
+diff --git a/libraries/ghci/ghci.cabal.in b/libraries/ghci/ghci.cabal.in
+index 06f7eca0c5..e9922ab24a 100644
+--- a/libraries/ghci/ghci.cabal.in
++++ b/libraries/ghci/ghci.cabal.in
+@@ -58,6 +58,8 @@ library
+             GHCi.StaticPtrTable
+             GHCi.TH
+ 
++    include-dirs: @FFIIncludeDir@
++
+     exposed-modules:
+         GHCi.BreakArray
+         GHCi.BinaryArray
+diff --git a/mk/config.mk.in b/mk/config.mk.in
+index 35f6e2d087..086a9147f2 100644
+--- a/mk/config.mk.in
++++ b/mk/config.mk.in
+@@ -181,6 +181,16 @@ else
+ GhcWithInterpreter=$(if $(findstring YES,$(DYNAMIC_GHC_PROGRAMS)),YES,NO)
+ endif
+ 
++# Whether to use libffi for adjustors (foreign import "wrapper") or
++# not.  If we have built-in support (rts/Adjustor.c) then we use that,
++# otherwise we fall back on libffi, which is slightly slower.
++ArchHasAdjustorSupport = $(if $(findstring $(TargetArch_CPP),i386 x86_64),YES,NO)
++ifeq "$(ArchHasAdjustorSupport)" "YES"
++UseLibFFIForAdjustors=NO
++else
++UseLibFFIForAdjustors=YES
++endif
++
+ # On Windows we normally want to make a relocatable bindist, to we
+ # ignore flags like libdir
+ ifeq "$(Windows_Host)" "YES"
+@@ -323,8 +333,6 @@ UseSystemLibFFI=@UseSystemLibFFI@
+ FFILibDir=@FFILibDir@
+ FFIIncludeDir=@FFIIncludeDir@
+ 
+-UseLibffiForAdjustors=@UseLibffiForAdjustors@
+-
+ UseLibdw=@UseLibdw@
+ LibdwLibDir=@LibdwLibDir@
+ LibdwIncludeDir=@LibdwIncludeDir@
+diff --git a/rts/Adjustor.c b/rts/Adjustor.c
+index 974d8e3d37..715ac7dbce 100644
+--- a/rts/Adjustor.c
++++ b/rts/Adjustor.c
+@@ -36,9 +36,290 @@ and C resources. Failure to do so will result in memory leaks on both the C and
+ Haskell side.
+ */
+ 
+-#include "Adjustor.h"
++#include "PosixSource.h"
++#include "Rts.h"
+ 
+-int totalArgumentSize(const char *typeString)
++#include "RtsUtils.h"
++#include "StablePtr.h"
++
++#if defined(USE_LIBFFI_FOR_ADJUSTORS)
++#include "ffi.h"
++#include <string.h>
++#endif
++
++#if defined(i386_HOST_ARCH)
++extern void adjustorCode(void);
++#elif defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
++// from AdjustorAsm.s
++// not declared as a function so that AIX-style
++// fundescs can never get in the way.
++extern void *adjustorCode;
++#endif
++
++#if defined(USE_LIBFFI_FOR_ADJUSTORS)
++/* There are subtle differences between how libffi adjustors work on
++ * different platforms, and the situation is a little complex.
++ *
++ * HOW ADJUSTORS/CLOSURES WORK ON LIBFFI:
++ * libffi's ffi_closure_alloc() function gives you two pointers to a closure,
++ * 1. the writable pointer, and 2. the executable pointer. You write the
++ * closure into the writable pointer (and ffi_prep_closure_loc() will do this
++ * for you) and you execute it at the executable pointer.
++ *
++ * THE PROBLEM:
++ * The RTS deals only with the executable pointer, but when it comes time to
++ * free the closure, libffi wants the writable pointer back that it gave you
++ * when you allocated it.
++ *
++ * On Linux we solve this problem by storing the address of the writable
++ * mapping into itself, then returning both writable and executable pointers
++ * plus 1 machine word for preparing the closure for use by the RTS (see the
++ * Linux version of allocateExec() in rts/sm/Storage.c). When we want to
++ * recover the writable address, we subtract 1 word from the executable
++ * address and fetch. This works because Linux kernel magic gives us two
++ * pointers with different addresses that refer to the same memory. Whatever
++ * you write into the writable address can be read back at the executable
++ * address. This method is very efficient.
++ *
++ * On iOS this breaks for two reasons: 1. the two pointers do not refer to
++ * the same memory (so we can't retrieve anything stored into the writable
++ * pointer if we only have the exec pointer), and 2. libffi's
++ * ffi_closure_alloc() assumes the pointer it has returned you is a
++ * ffi_closure structure and treats it as such: It uses that memory to
++ * communicate with ffi_prep_closure_loc(). On Linux by contrast
++ * ffi_closure_alloc() is viewed simply as a memory allocation, and only
++ * ffi_prep_closure_loc() deals in ffi_closure structures. Each of these
++ * differences is enough make the efficient way used on Linux not work on iOS.
++ * Instead on iOS we use hash tables to recover the writable address from the
++ * executable one. This method is conservative and would almost certainly work
++ * on any platform, but on Linux it makes sense to use the faster method.
++ */
++void
++freeHaskellFunctionPtr(void* ptr)
++{
++    ffi_closure *cl;
++
++#if defined(ios_HOST_OS) || defined(darwin_HOST_OS)
++    cl = execToWritable(ptr);
++#else
++    cl = (ffi_closure*)ptr;
++#endif
++    freeStablePtr(cl->user_data);
++    stgFree(cl->cif->arg_types);
++    stgFree(cl->cif);
++    freeExec(ptr);
++}
++
++static ffi_type * char_to_ffi_type(char c)
++{
++    switch (c) {
++    case 'v':  return &ffi_type_void;
++    case 'f':  return &ffi_type_float;
++    case 'd':  return &ffi_type_double;
++    case 'L':  return &ffi_type_sint64;
++    case 'l':  return &ffi_type_uint64;
++    case 'W':  return &ffi_type_sint32;
++    case 'w':  return &ffi_type_uint32;
++    case 'S':  return &ffi_type_sint16;
++    case 's':  return &ffi_type_uint16;
++    case 'B':  return &ffi_type_sint8;
++    case 'b':  return &ffi_type_uint8;
++    case 'p':  return &ffi_type_pointer;
++    default:   barf("char_to_ffi_type: unknown type '%c'", c);
++    }
++}
++
++void*
++createAdjustor (int cconv,
++                StgStablePtr hptr,
++                StgFunPtr wptr,
++                char *typeString)
++{
++    ffi_cif *cif;
++    ffi_type **arg_types;
++    uint32_t n_args, i;
++    ffi_type *result_type;
++    ffi_closure *cl;
++    int r, abi;
++    void *code;
++
++    n_args = strlen(typeString) - 1;
++    cif = stgMallocBytes(sizeof(ffi_cif), "createAdjustor");
++    arg_types = stgMallocBytes(n_args * sizeof(ffi_type*), "createAdjustor");
++
++    result_type = char_to_ffi_type(typeString[0]);
++    for (i=0; i < n_args; i++) {
++        arg_types[i] = char_to_ffi_type(typeString[i+1]);
++    }
++    switch (cconv) {
++#if defined(mingw32_HOST_OS) && defined(i386_HOST_ARCH)
++    case 0: /* stdcall */
++        abi = FFI_STDCALL;
++        break;
++#endif /* defined(mingw32_HOST_OS) && defined(i386_HOST_ARCH) */
++    case 1: /* ccall */
++        abi = FFI_DEFAULT_ABI;
++        break;
++    default:
++        barf("createAdjustor: convention %d not supported on this platform", cconv);
++    }
++
++    r = ffi_prep_cif(cif, abi, n_args, result_type, arg_types);
++    if (r != FFI_OK) barf("ffi_prep_cif failed: %d", r);
++
++    cl = allocateExec(sizeof(ffi_closure), &code);
++    if (cl == NULL) {
++        barf("createAdjustor: failed to allocate memory");
++    }
++
++    r = ffi_prep_closure_loc(cl, cif, (void*)wptr, hptr/*userdata*/, code);
++    if (r != FFI_OK) barf("ffi_prep_closure_loc failed: %d", r);
++
++    return (void*)code;
++}
++
++#else // To end of file...
++
++#if defined(_WIN32)
++#include <windows.h>
++#endif
++
++#if defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS)
++#include <string.h>
++#endif
++
++#if defined(LEADING_UNDERSCORE)
++#define UNDERSCORE "_"
++#else
++#define UNDERSCORE ""
++#endif
++
++#if defined(x86_64_HOST_ARCH)
++/*
++  Now here's something obscure for you:
++
++  When generating an adjustor thunk that uses the C calling
++  convention, we have to make sure that the thunk kicks off
++  the process of jumping into Haskell with a tail jump. Why?
++  Because as a result of jumping in into Haskell we may end
++  up freeing the very adjustor thunk we came from using
++  freeHaskellFunctionPtr(). Hence, we better not return to
++  the adjustor code on our way  out, since it could by then
++  point to junk.
++
++  The fix is readily at hand, just include the opcodes
++  for the C stack fixup code that we need to perform when
++  returning in some static piece of memory and arrange
++  to return to it before tail jumping from the adjustor thunk.
++*/
++static void GNUC3_ATTRIBUTE(used) obscure_ccall_wrapper(void)
++{
++  __asm__ (
++   ".globl " UNDERSCORE "obscure_ccall_ret_code\n"
++   UNDERSCORE "obscure_ccall_ret_code:\n\t"
++   "addq $0x8, %rsp\n\t"
++#if defined(mingw32_HOST_OS)
++   /* On Win64, we had to put the original return address after the
++      arg 1-4 spill slots, ro now we have to move it back */
++   "movq 0x20(%rsp), %rcx\n"
++   "movq %rcx, (%rsp)\n"
++#endif /* defined(mingw32_HOST_OS) */
++   "ret"
++  );
++}
++extern void obscure_ccall_ret_code(void);
++#endif /* defined(x86_64_HOST_ARCH) */
++
++#if defined(alpha_HOST_ARCH)
++/* To get the definition of PAL_imb: */
++# if defined(linux_HOST_OS)
++#  include <asm/pal.h>
++# else
++#  include <machine/pal.h>
++# endif
++#endif
++
++#if defined(ia64_HOST_ARCH)
++
++/* Layout of a function descriptor */
++typedef struct _IA64FunDesc {
++    StgWord64 ip;
++    StgWord64 gp;
++} IA64FunDesc;
++
++static void *
++stgAllocStable(size_t size_in_bytes, StgStablePtr *stable)
++{
++  StgArrBytes* arr;
++  uint32_t data_size_in_words, total_size_in_words;
++
++  /* round up to a whole number of words */
++  data_size_in_words  = ROUNDUP_BYTES_TO_WDS(size_in_bytes);
++  total_size_in_words = sizeofW(StgArrBytes) + data_size_in_words;
++
++  /* allocate and fill it in */
++  arr = (StgArrBytes *)allocate(total_size_in_words);
++  SET_ARR_HDR(arr, &stg_ARR_WORDS_info, CCCS, size_in_bytes);
++
++  /* obtain a stable ptr */
++  *stable = getStablePtr((StgPtr)arr);
++
++  /* and return a ptr to the goods inside the array */
++  return(&(arr->payload));
++}
++#endif /* defined(ia64_HOST_ARCH) */
++
++#if defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS)
++__asm__("obscure_ccall_ret_code:\n\t"
++        "lwz 1,0(1)\n\t"
++        "lwz 0,4(1)\n\t"
++        "mtlr 0\n\t"
++        "blr");
++extern void obscure_ccall_ret_code(void);
++#endif /* defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS) */
++
++#if defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
++#if !(defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS))
++
++/* !!! !!! WARNING: !!! !!!
++ * This structure is accessed from AdjustorAsm.s
++ * Any changes here have to be mirrored in the offsets there.
++ */
++
++typedef struct AdjustorStub {
++        /* fundesc-based ABIs */
++#define         FUNDESCS
++    StgFunPtr       code;
++    struct AdjustorStub
++                    *toc;
++    void            *env;
++    StgStablePtr    hptr;
++    StgFunPtr       wptr;
++    StgInt          negative_framesize;
++    StgInt          extrawords_plus_one;
++} AdjustorStub;
++
++#endif /* !(defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS)) */
++#endif /* defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH) */
++
++#if defined(i386_HOST_ARCH)
++
++/* !!! !!! WARNING: !!! !!!
++ * This structure is accessed from AdjustorAsm.s
++ * Any changes here have to be mirrored in the offsets there.
++ */
++
++typedef struct AdjustorStub {
++    unsigned char   call[8];
++    StgStablePtr    hptr;
++    StgFunPtr       wptr;
++    StgInt          frame_size;
++    StgInt          argument_size;
++} AdjustorStub;
++#endif /* defined(i386_HOST_ARCH) */
++
++#if defined(i386_HOST_ARCH) || defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
++static int totalArgumentSize(char *typeString)
+ {
+     int sz = 0;
+     while(*typeString)
+@@ -47,20 +328,973 @@ int totalArgumentSize(const char *typeString)
+ 
+         switch(t)
+         {
+-            // on 32-bit platforms, Double and Int64 occupy two words.
+-        case 'd':
+-        case 'l':
+-        case 'L':
+-            if(sizeof(void*) == 4)
+-            {
+-                sz += 2;
+-                break;
+-            }
+-            /* fall through */
+-            // everything else is one word.
+-        default:
+-            sz += 1;
++                // on 32-bit platforms, Double and Int64 occupy two words.
++            case 'd':
++            case 'l':
++            case 'L':
++                if(sizeof(void*) == 4)
++                {
++                    sz += 2;
++                    break;
++                }
++                /* fall through */
++                // everything else is one word.
++            default:
++                sz += 1;
+         }
+     }
+     return sz;
+ }
++#endif /* defined(i386_HOST_ARCH) || defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH) */
++
++void*
++createAdjustor(int cconv, StgStablePtr hptr,
++               StgFunPtr wptr,
++               char *typeString
++#if !defined(powerpc_HOST_ARCH) && !defined(powerpc64_HOST_ARCH) && !defined(x86_64_HOST_ARCH)
++                  STG_UNUSED
++#endif
++              )
++{
++  void *adjustor = NULL;
++  void *code = NULL;
++
++  switch (cconv)
++  {
++  case 0: /* _stdcall */
++#if defined(i386_HOST_ARCH) && !defined(darwin_HOST_OS)
++    /* Magic constant computed by inspecting the code length of
++       the following assembly language snippet
++       (offset and machine code prefixed):
++
++     <0>:       58                popl   %eax              # temp. remove ret addr..
++     <1>:       68 fd fc fe fa    pushl  0xfafefcfd        # constant is large enough to
++                                                           # hold a StgStablePtr
++     <6>:       50                pushl  %eax              # put back ret. addr
++     <7>:       b8 fa ef ff 00    movl   $0x00ffeffa, %eax # load up wptr
++     <c>:       ff e0             jmp    %eax              # and jump to it.
++                # the callee cleans up the stack
++    */
++    adjustor = allocateExec(14,&code);
++    {
++        unsigned char *const adj_code = (unsigned char *)adjustor;
++        adj_code[0x00] = (unsigned char)0x58;  /* popl %eax  */
++
++        adj_code[0x01] = (unsigned char)0x68;  /* pushl hptr (which is a dword immediate ) */
++        *((StgStablePtr*)(adj_code + 0x02)) = (StgStablePtr)hptr;
++
++        adj_code[0x06] = (unsigned char)0x50; /* pushl %eax */
++
++        adj_code[0x07] = (unsigned char)0xb8; /* movl  $wptr, %eax */
++        *((StgFunPtr*)(adj_code + 0x08)) = (StgFunPtr)wptr;
++
++        adj_code[0x0c] = (unsigned char)0xff; /* jmp %eax */
++        adj_code[0x0d] = (unsigned char)0xe0;
++    }
++#endif /* defined(i386_HOST_ARCH) && !defined(darwin_HOST_OS) */
++    break;
++
++  case 1: /* _ccall */
++#if defined(i386_HOST_ARCH)
++    {
++        /*
++          Most of the trickiness here is due to the need to keep the
++          stack pointer 16-byte aligned (see #5250).  That means we
++          can't just push another argument on the stack and call the
++          wrapper, we may have to shuffle the whole argument block.
++
++          We offload most of the work to AdjustorAsm.S.
++        */
++        AdjustorStub *adjustorStub = allocateExec(sizeof(AdjustorStub),&code);
++        adjustor = adjustorStub;
++
++        int sz = totalArgumentSize(typeString);
++
++        adjustorStub->call[0] = 0xe8;
++        *(long*)&adjustorStub->call[1] = ((char*)&adjustorCode) - ((char*)code + 5);
++        adjustorStub->hptr = hptr;
++        adjustorStub->wptr = wptr;
++
++            // The adjustor puts the following things on the stack:
++            // 1.) %ebp link
++            // 2.) padding and (a copy of) the arguments
++            // 3.) a dummy argument
++            // 4.) hptr
++            // 5.) return address (for returning to the adjustor)
++            // All these have to add up to a multiple of 16.
++
++            // first, include everything in frame_size
++        adjustorStub->frame_size = sz * 4 + 16;
++            // align to 16 bytes
++        adjustorStub->frame_size = (adjustorStub->frame_size + 15) & ~15;
++            // only count 2.) and 3.) as part of frame_size
++        adjustorStub->frame_size -= 12;
++        adjustorStub->argument_size = sz;
++    }
++
++#elif defined(x86_64_HOST_ARCH)
++
++# if defined(mingw32_HOST_OS)
++    /*
++      stack at call:
++               argn
++               ...
++               arg5
++               return address
++               %rcx,%rdx,%r8,%r9 = arg1..arg4
++
++      if there are <4 integer args, then we can just push the
++      StablePtr into %rcx and shuffle the other args up.
++
++      If there are >=4 integer args, then we have to flush one arg
++      to the stack, and arrange to adjust the stack ptr on return.
++      The stack will be rearranged to this:
++
++             argn
++             ...
++             arg5
++             return address  *** <-- dummy arg in stub fn.
++             arg4
++             obscure_ccall_ret_code
++
++      This unfortunately means that the type of the stub function
++      must have a dummy argument for the original return address
++      pointer inserted just after the 4th integer argument.
++
++      Code for the simple case:
++
++   0:   4d 89 c1                mov    %r8,%r9
++   3:   49 89 d0                mov    %rdx,%r8
++   6:   48 89 ca                mov    %rcx,%rdx
++   9:   f2 0f 10 da             movsd  %xmm2,%xmm3
++   d:   f2 0f 10 d1             movsd  %xmm1,%xmm2
++  11:   f2 0f 10 c8             movsd  %xmm0,%xmm1
++  15:   48 8b 0d 0c 00 00 00    mov    0xc(%rip),%rcx    # 28 <.text+0x28>
++  1c:   ff 25 0e 00 00 00       jmpq   *0xe(%rip)        # 30 <.text+0x30>
++  22:   90                      nop
++  [...]
++
++
++  And the version for >=4 integer arguments:
++
++[we want to push the 4th argument (either %r9 or %xmm3, depending on
++ whether it is a floating arg or not) and the return address onto the
++ stack. However, slots 1-4 are reserved for code we call to spill its
++ args 1-4 into, so we can't just push them onto the bottom of the stack.
++ So first put the 4th argument onto the stack, above what will be the
++ spill slots.]
++   0:   48 83 ec 08             sub    $0x8,%rsp
++[if non-floating arg, then do this:]
++   4:   90                      nop
++   5:   4c 89 4c 24 20          mov    %r9,0x20(%rsp)
++[else if floating arg then do this:]
++   4:   f2 0f 11 5c 24 20       movsd  %xmm3,0x20(%rsp)
++[end if]
++[Now push the new return address onto the stack]
++   a:   ff 35 30 00 00 00       pushq  0x30(%rip)        # 40 <.text+0x40>
++[But the old return address has been moved up into a spill slot, so
++ we need to move it above them]
++  10:   4c 8b 4c 24 10          mov    0x10(%rsp),%r9
++  15:   4c 89 4c 24 30          mov    %r9,0x30(%rsp)
++[Now we do the normal register shuffle-up etc]
++  1a:   4d 89 c1                mov    %r8,%r9
++  1d:   49 89 d0                mov    %rdx,%r8
++  20:   48 89 ca                mov    %rcx,%rdx
++  23:   f2 0f 10 da             movsd  %xmm2,%xmm3
++  27:   f2 0f 10 d1             movsd  %xmm1,%xmm2
++  2b:   f2 0f 10 c8             movsd  %xmm0,%xmm1
++  2f:   48 8b 0d 12 00 00 00    mov    0x12(%rip),%rcx        # 48 <.text+0x48>
++  36:   ff 25 14 00 00 00       jmpq   *0x14(%rip)        # 50 <.text+0x50>
++  3c:   90                      nop
++  3d:   90                      nop
++  3e:   90                      nop
++  3f:   90                      nop
++  [...]
++
++    */
++    {
++        StgWord8 *adj_code;
++
++        // determine whether we have 4 or more integer arguments,
++        // and therefore need to flush one to the stack.
++        if ((typeString[0] == '\0') ||
++            (typeString[1] == '\0') ||
++            (typeString[2] == '\0') ||
++            (typeString[3] == '\0')) {
++
++            adjustor = allocateExec(0x38,&code);
++            adj_code = (StgWord8*)adjustor;
++
++            *(StgInt32 *)adj_code        = 0x49c1894d;
++            *(StgInt32 *)(adj_code+0x4)  = 0x8948d089;
++            *(StgInt32 *)(adj_code+0x8)  = 0x100ff2ca;
++            *(StgInt32 *)(adj_code+0xc)  = 0x100ff2da;
++            *(StgInt32 *)(adj_code+0x10) = 0x100ff2d1;
++            *(StgInt32 *)(adj_code+0x14) = 0x0d8b48c8;
++            *(StgInt32 *)(adj_code+0x18) = 0x0000000c;
++
++            *(StgInt32 *)(adj_code+0x1c) = 0x000e25ff;
++            *(StgInt32 *)(adj_code+0x20) = 0x00000000;
++            *(StgInt64 *)(adj_code+0x28) = (StgInt64)hptr;
++            *(StgInt64 *)(adj_code+0x30) = (StgInt64)wptr;
++        }
++        else
++        {
++            int fourthFloating;
++
++            fourthFloating = (typeString[3] == 'f' || typeString[3] == 'd');
++            adjustor = allocateExec(0x58,&code);
++            adj_code = (StgWord8*)adjustor;
++            *(StgInt32 *)adj_code        = 0x08ec8348;
++            *(StgInt32 *)(adj_code+0x4)  = fourthFloating ? 0x5c110ff2
++                                                          : 0x4c894c90;
++            *(StgInt32 *)(adj_code+0x8)  = 0x35ff2024;
++            *(StgInt32 *)(adj_code+0xc)  = 0x00000030;
++            *(StgInt32 *)(adj_code+0x10) = 0x244c8b4c;
++            *(StgInt32 *)(adj_code+0x14) = 0x4c894c10;
++            *(StgInt32 *)(adj_code+0x18) = 0x894d3024;
++            *(StgInt32 *)(adj_code+0x1c) = 0xd08949c1;
++            *(StgInt32 *)(adj_code+0x20) = 0xf2ca8948;
++            *(StgInt32 *)(adj_code+0x24) = 0xf2da100f;
++            *(StgInt32 *)(adj_code+0x28) = 0xf2d1100f;
++            *(StgInt32 *)(adj_code+0x2c) = 0x48c8100f;
++            *(StgInt32 *)(adj_code+0x30) = 0x00120d8b;
++            *(StgInt32 *)(adj_code+0x34) = 0x25ff0000;
++            *(StgInt32 *)(adj_code+0x38) = 0x00000014;
++            *(StgInt32 *)(adj_code+0x3c) = 0x90909090;
++            *(StgInt64 *)(adj_code+0x40) = (StgInt64)obscure_ccall_ret_code;
++            *(StgInt64 *)(adj_code+0x48) = (StgInt64)hptr;
++            *(StgInt64 *)(adj_code+0x50) = (StgInt64)wptr;
++        }
++    }
++
++# else
++    /*
++      stack at call:
++               argn
++               ...
++               arg7
++               return address
++               %rdi,%rsi,%rdx,%rcx,%r8,%r9 = arg1..arg6
++
++      if there are <6 integer args, then we can just push the
++      StablePtr into %edi and shuffle the other args up.
++
++      If there are >=6 integer args, then we have to flush one arg
++      to the stack, and arrange to adjust the stack ptr on return.
++      The stack will be rearranged to this:
++
++             argn
++             ...
++             arg7
++             return address  *** <-- dummy arg in stub fn.
++             arg6
++             obscure_ccall_ret_code
++
++      This unfortunately means that the type of the stub function
++      must have a dummy argument for the original return address
++      pointer inserted just after the 6th integer argument.
++
++      Code for the simple case:
++
++   0:   4d 89 c1                mov    %r8,%r9
++   3:   49 89 c8                mov    %rcx,%r8
++   6:   48 89 d1                mov    %rdx,%rcx
++   9:   48 89 f2                mov    %rsi,%rdx
++   c:   48 89 fe                mov    %rdi,%rsi
++   f:   48 8b 3d 0a 00 00 00    mov    10(%rip),%rdi
++  16:   ff 25 0c 00 00 00       jmpq   *12(%rip)
++  ...
++  20: .quad 0  # aligned on 8-byte boundary
++  28: .quad 0  # aligned on 8-byte boundary
++
++
++  And the version for >=6 integer arguments:
++
++   0:   41 51                   push   %r9
++   2:   ff 35 20 00 00 00       pushq  32(%rip)        # 28 <ccall_adjustor+0x28>
++   8:   4d 89 c1                mov    %r8,%r9
++   b:   49 89 c8                mov    %rcx,%r8
++   e:   48 89 d1                mov    %rdx,%rcx
++  11:   48 89 f2                mov    %rsi,%rdx
++  14:   48 89 fe                mov    %rdi,%rsi
++  17:   48 8b 3d 12 00 00 00    mov    18(%rip),%rdi        # 30 <ccall_adjustor+0x30>
++  1e:   ff 25 14 00 00 00       jmpq   *20(%rip)        # 38 <ccall_adjustor+0x38>
++  ...
++  28: .quad 0  # aligned on 8-byte boundary
++  30: .quad 0  # aligned on 8-byte boundary
++  38: .quad 0  # aligned on 8-byte boundary
++    */
++
++    {
++        int i = 0;
++        char *c;
++        StgWord8 *adj_code;
++
++        // determine whether we have 6 or more integer arguments,
++        // and therefore need to flush one to the stack.
++        for (c = typeString; *c != '\0'; c++) {
++            if (*c != 'f' && *c != 'd') i++;
++            if (i == 6) break;
++        }
++
++        if (i < 6) {
++            adjustor = allocateExec(0x30,&code);
++            adj_code = (StgWord8*)adjustor;
++
++            *(StgInt32 *)adj_code        = 0x49c1894d;
++            *(StgInt32 *)(adj_code+0x4)  = 0x8948c889;
++            *(StgInt32 *)(adj_code+0x8)  = 0xf28948d1;
++            *(StgInt32 *)(adj_code+0xc)  = 0x48fe8948;
++            *(StgInt32 *)(adj_code+0x10) = 0x000a3d8b;
++            *(StgInt32 *)(adj_code+0x14) = 0x25ff0000;
++            *(StgInt32 *)(adj_code+0x18) = 0x0000000c;
++            *(StgInt64 *)(adj_code+0x20) = (StgInt64)hptr;
++            *(StgInt64 *)(adj_code+0x28) = (StgInt64)wptr;
++        }
++        else
++        {
++            adjustor = allocateExec(0x40,&code);
++            adj_code = (StgWord8*)adjustor;
++
++            *(StgInt32 *)adj_code        = 0x35ff5141;
++            *(StgInt32 *)(adj_code+0x4)  = 0x00000020;
++            *(StgInt32 *)(adj_code+0x8)  = 0x49c1894d;
++            *(StgInt32 *)(adj_code+0xc)  = 0x8948c889;
++            *(StgInt32 *)(adj_code+0x10) = 0xf28948d1;
++            *(StgInt32 *)(adj_code+0x14) = 0x48fe8948;
++            *(StgInt32 *)(adj_code+0x18) = 0x00123d8b;
++            *(StgInt32 *)(adj_code+0x1c) = 0x25ff0000;
++            *(StgInt32 *)(adj_code+0x20) = 0x00000014;
++
++            *(StgInt64 *)(adj_code+0x28) = (StgInt64)obscure_ccall_ret_code;
++            *(StgInt64 *)(adj_code+0x30) = (StgInt64)hptr;
++            *(StgInt64 *)(adj_code+0x38) = (StgInt64)wptr;
++        }
++    }
++# endif
++
++
++#elif defined(sparc_HOST_ARCH)
++  /* Magic constant computed by inspecting the code length of the following
++     assembly language snippet (offset and machine code prefixed):
++
++     <00>: 9C23A008   sub   %sp, 8, %sp         ! make room for %o4/%o5 in caller's frame
++     <04>: DA23A060   st    %o5, [%sp + 96]     ! shift registers by 2 positions
++     <08>: D823A05C   st    %o4, [%sp + 92]
++     <0C>: 9A10000B   mov   %o3, %o5
++     <10>: 9810000A   mov   %o2, %o4
++     <14>: 96100009   mov   %o1, %o3
++     <18>: 94100008   mov   %o0, %o2
++     <1C>: 13000000   sethi %hi(wptr), %o1      ! load up wptr (1 of 2)
++     <20>: 11000000   sethi %hi(hptr), %o0      ! load up hptr (1 of 2)
++     <24>: 81C26000   jmp   %o1 + %lo(wptr)     ! jump to wptr (load 2 of 2)
++     <28>: 90122000   or    %o0, %lo(hptr), %o0 ! load up hptr (2 of 2, delay slot)
++     <2C>  00000000                             ! place for getting hptr back easily
++
++     ccall'ing on SPARC is easy, because we are quite lucky to push a
++     multiple of 8 bytes (1 word hptr + 1 word dummy arg) in front of the
++     existing arguments (note that %sp must stay double-word aligned at
++     all times, see ABI spec at http://www.sparc.org/standards/psABI3rd.pdf).
++     To do this, we extend the *caller's* stack frame by 2 words and shift
++     the output registers used for argument passing (%o0 - %o5, we are a *leaf*
++     procedure because of the tail-jump) by 2 positions. This makes room in
++     %o0 and %o1 for the additional arguments, namely  hptr and a dummy (used
++     for destination addr of jump on SPARC, return address on x86, ...). This
++     shouldn't cause any problems for a C-like caller: alloca is implemented
++     similarly, and local variables should be accessed via %fp, not %sp. In a
++     nutshell: This should work! (Famous last words! :-)
++  */
++    adjustor = allocateExec(4*(11+1),&code);
++    {
++        unsigned long *const adj_code = (unsigned long *)adjustor;
++
++        adj_code[ 0]  = 0x9C23A008UL;   /* sub   %sp, 8, %sp         */
++        adj_code[ 1]  = 0xDA23A060UL;   /* st    %o5, [%sp + 96]     */
++        adj_code[ 2]  = 0xD823A05CUL;   /* st    %o4, [%sp + 92]     */
++        adj_code[ 3]  = 0x9A10000BUL;   /* mov   %o3, %o5            */
++        adj_code[ 4]  = 0x9810000AUL;   /* mov   %o2, %o4            */
++        adj_code[ 5]  = 0x96100009UL;   /* mov   %o1, %o3            */
++        adj_code[ 6]  = 0x94100008UL;   /* mov   %o0, %o2            */
++        adj_code[ 7]  = 0x13000000UL;   /* sethi %hi(wptr), %o1      */
++        adj_code[ 7] |= ((unsigned long)wptr) >> 10;
++        adj_code[ 8]  = 0x11000000UL;   /* sethi %hi(hptr), %o0      */
++        adj_code[ 8] |= ((unsigned long)hptr) >> 10;
++        adj_code[ 9]  = 0x81C26000UL;   /* jmp   %o1 + %lo(wptr)     */
++        adj_code[ 9] |= ((unsigned long)wptr) & 0x000003FFUL;
++        adj_code[10]  = 0x90122000UL;   /* or    %o0, %lo(hptr), %o0 */
++        adj_code[10] |= ((unsigned long)hptr) & 0x000003FFUL;
++
++        adj_code[11]  = (unsigned long)hptr;
++
++        /* flush cache */
++        asm("flush %0" : : "r" (adj_code     ));
++        asm("flush %0" : : "r" (adj_code +  2));
++        asm("flush %0" : : "r" (adj_code +  4));
++        asm("flush %0" : : "r" (adj_code +  6));
++        asm("flush %0" : : "r" (adj_code + 10));
++
++        /* max. 5 instructions latency, and we need at >= 1 for returning */
++        asm("nop");
++        asm("nop");
++        asm("nop");
++        asm("nop");
++    }
++#elif defined(alpha_HOST_ARCH)
++  /* Magic constant computed by inspecting the code length of
++     the following assembly language snippet
++     (offset and machine code prefixed; note that the machine code
++     shown is longwords stored in little-endian order):
++
++  <00>: 46520414        mov     a2, a4
++  <04>: 46100412        mov     a0, a2
++  <08>: a61b0020        ldq     a0, 0x20(pv)    # load up hptr
++  <0c>: 46730415        mov     a3, a5
++  <10>: a77b0028        ldq     pv, 0x28(pv)    # load up wptr
++  <14>: 46310413        mov     a1, a3
++  <18>: 6bfb----        jmp     (pv), <hint>    # jump to wptr (with hint)
++  <1c>: 00000000                                # padding for alignment
++  <20>: [8 bytes for hptr quadword]
++  <28>: [8 bytes for wptr quadword]
++
++     The "computed" jump at <08> above is really a jump to a fixed
++     location.  Accordingly, we place an always-correct hint in the
++     jump instruction, namely the address offset from <0c> to wptr,
++     divided by 4, taking the lowest 14 bits.
++
++     We only support passing 4 or fewer argument words, for the same
++     reason described under sparc_HOST_ARCH above by JRS, 21 Aug 01.
++     On the Alpha the first 6 integer arguments are in a0 through a5,
++     and the rest on the stack.  Hence we want to shuffle the original
++     caller's arguments by two.
++
++     On the Alpha the calling convention is so complex and dependent
++     on the callee's signature -- for example, the stack pointer has
++     to be a multiple of 16 -- that it seems impossible to me [ccshan]
++     to handle the general case correctly without changing how the
++     adjustor is called from C.  For now, our solution of shuffling
++     registers only and ignoring the stack only works if the original
++     caller passed 4 or fewer argument words.
++
++TODO: Depending on how much allocation overhead stgMallocBytes uses for
++      header information (more precisely, if the overhead is no more than
++      4 bytes), we should move the first three instructions above down by
++      4 bytes (getting rid of the nop), hence saving memory. [ccshan]
++  */
++    ASSERT(((StgWord64)wptr & 3) == 0);
++    adjustor = allocateExec(48,&code);
++    {
++        StgWord64 *const code = (StgWord64 *)adjustor;
++
++        code[0] = 0x4610041246520414L;
++        code[1] = 0x46730415a61b0020L;
++        code[2] = 0x46310413a77b0028L;
++        code[3] = 0x000000006bfb0000L
++                | (((StgWord32*)(wptr) - (StgWord32*)(code) - 3) & 0x3fff);
++
++        code[4] = (StgWord64)hptr;
++        code[5] = (StgWord64)wptr;
++
++        /* Ensure that instruction cache is consistent with our new code */
++        __asm__ volatile("call_pal %0" : : "i" (PAL_imb));
++    }
++#elif defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS)
++
++#define OP_LO(op,lo)  ((((unsigned)(op)) << 16) | (((unsigned)(lo)) & 0xFFFF))
++#define OP_HI(op,hi)  ((((unsigned)(op)) << 16) | (((unsigned)(hi)) >> 16))
++    {
++        /* The PowerPC Linux (32-bit) calling convention is annoyingly complex.
++           We need to calculate all the details of the stack frame layout,
++           taking into account the types of all the arguments, and then
++           generate code on the fly. */
++
++        int src_gpr = 3, dst_gpr = 5;
++        int fpr = 3;
++        int src_offset = 0, dst_offset = 0;
++        int n = strlen(typeString),i;
++        int src_locs[n], dst_locs[n];
++        int frameSize;
++        unsigned *code;
++
++            /* Step 1:
++               Calculate where the arguments should go.
++               src_locs[] will contain the locations of the arguments in the
++               original stack frame passed to the adjustor.
++               dst_locs[] will contain the locations of the arguments after the
++               adjustor runs, on entry to the wrapper proc pointed to by wptr.
++
++               This algorithm is based on the one described on page 3-19 of the
++               System V ABI PowerPC Processor Supplement.
++            */
++        for(i=0;typeString[i];i++)
++        {
++            char t = typeString[i];
++            if((t == 'f' || t == 'd') && fpr <= 8)
++                src_locs[i] = dst_locs[i] = -32-(fpr++);
++            else
++            {
++                if((t == 'l' || t == 'L') && src_gpr <= 9)
++                {
++                    if((src_gpr & 1) == 0)
++                        src_gpr++;
++                    src_locs[i] = -src_gpr;
++                    src_gpr += 2;
++                }
++                else if((t == 'w' || t == 'W') && src_gpr <= 10)
++                {
++                    src_locs[i] = -(src_gpr++);
++                }
++                else
++                {
++                    if(t == 'l' || t == 'L' || t == 'd')
++                    {
++                        if(src_offset % 8)
++                            src_offset += 4;
++                    }
++                    src_locs[i] = src_offset;
++                    src_offset += (t == 'l' || t == 'L' || t == 'd') ? 8 : 4;
++                }
++
++                    if((t == 'l' || t == 'L') && dst_gpr <= 9)
++                {
++                    if((dst_gpr & 1) == 0)
++                        dst_gpr++;
++                    dst_locs[i] = -dst_gpr;
++                    dst_gpr += 2;
++                }
++                else if((t == 'w' || t == 'W') && dst_gpr <= 10)
++                {
++                    dst_locs[i] = -(dst_gpr++);
++                }
++                else
++                {
++                    if(t == 'l' || t == 'L' || t == 'd')
++                    {
++                        if(dst_offset % 8)
++                            dst_offset += 4;
++                    }
++                    dst_locs[i] = dst_offset;
++                    dst_offset += (t == 'l' || t == 'L' || t == 'd') ? 8 : 4;
++                }
++            }
++        }
++
++        frameSize = dst_offset + 8;
++        frameSize = (frameSize+15) & ~0xF;
++
++            /* Step 2:
++               Build the adjustor.
++            */
++                    // allocate space for at most 4 insns per parameter
++                    // plus 14 more instructions.
++        adjustor = allocateExec(4 * (4*n + 14),&code);
++        code = (unsigned*)adjustor;
++
++        *code++ = 0x48000008; // b *+8
++            // * Put the hptr in a place where freeHaskellFunctionPtr
++            //   can get at it.
++        *code++ = (unsigned) hptr;
++
++            // * save the link register
++        *code++ = 0x7c0802a6; // mflr r0;
++        *code++ = 0x90010004; // stw r0, 4(r1);
++            // * and build a new stack frame
++        *code++ = OP_LO(0x9421, -frameSize); // stwu r1, -frameSize(r1)
++
++            // * now generate instructions to copy arguments
++            //   from the old stack frame into the new stack frame.
++        for(i=n-1;i>=0;i--)
++        {
++            if(src_locs[i] < -32)
++                ASSERT(dst_locs[i] == src_locs[i]);
++            else if(src_locs[i] < 0)
++            {
++                // source in GPR.
++                ASSERT(typeString[i] != 'f' && typeString[i] != 'd');
++                if(dst_locs[i] < 0)
++                {
++                    ASSERT(dst_locs[i] > -32);
++                        // dst is in GPR, too.
++
++                    if(typeString[i] == 'l' || typeString[i] == 'L')
++                    {
++                            // mr dst+1, src+1
++                        *code++ = 0x7c000378
++                                | ((-dst_locs[i]+1) << 16)
++                                | ((-src_locs[i]+1) << 11)
++                                | ((-src_locs[i]+1) << 21);
++                    }
++                    // mr dst, src
++                    *code++ = 0x7c000378
++                            | ((-dst_locs[i]) << 16)
++                            | ((-src_locs[i]) << 11)
++                            | ((-src_locs[i]) << 21);
++                }
++                else
++                {
++                    if(typeString[i] == 'l' || typeString[i] == 'L')
++                    {
++                            // stw src+1, dst_offset+4(r1)
++                        *code++ = 0x90010000
++                                | ((-src_locs[i]+1) << 21)
++                                | (dst_locs[i] + 4);
++                    }
++
++                        // stw src, dst_offset(r1)
++                    *code++ = 0x90010000
++                            | ((-src_locs[i]) << 21)
++                            | (dst_locs[i] + 8);
++                }
++            }
++            else
++            {
++                ASSERT(dst_locs[i] >= 0);
++                ASSERT(typeString[i] != 'f' && typeString[i] != 'd');
++
++                if(typeString[i] == 'l' || typeString[i] == 'L')
++                {
++                    // lwz r0, src_offset(r1)
++                        *code++ = 0x80010000
++                                | (src_locs[i] + frameSize + 8 + 4);
++                    // stw r0, dst_offset(r1)
++                        *code++ = 0x90010000
++                                | (dst_locs[i] + 8 + 4);
++                    }
++                // lwz r0, src_offset(r1)
++                    *code++ = 0x80010000
++                            | (src_locs[i] + frameSize + 8);
++                // stw r0, dst_offset(r1)
++                    *code++ = 0x90010000
++                            | (dst_locs[i] + 8);
++           }
++        }
++
++            // * hptr will be the new first argument.
++            // lis r3, hi(hptr)
++        *code++ = OP_HI(0x3c60, hptr);
++            // ori r3,r3,lo(hptr)
++        *code++ = OP_LO(0x6063, hptr);
++
++            // * we need to return to a piece of code
++            //   which will tear down the stack frame.
++            // lis r11,hi(obscure_ccall_ret_code)
++        *code++ = OP_HI(0x3d60, obscure_ccall_ret_code);
++            // ori r11,r11,lo(obscure_ccall_ret_code)
++        *code++ = OP_LO(0x616b, obscure_ccall_ret_code);
++            // mtlr r11
++        *code++ = 0x7d6803a6;
++
++            // * jump to wptr
++            // lis r11,hi(wptr)
++        *code++ = OP_HI(0x3d60, wptr);
++            // ori r11,r11,lo(wptr)
++        *code++ = OP_LO(0x616b, wptr);
++            // mtctr r11
++        *code++ = 0x7d6903a6;
++            // bctr
++        *code++ = 0x4e800420;
++
++        // Flush the Instruction cache:
++        {
++            unsigned *p = adjustor;
++            while(p < code)
++            {
++                __asm__ volatile ("dcbf 0,%0\n\tsync\n\ticbi 0,%0"
++                                 : : "r" (p));
++                p++;
++            }
++            __asm__ volatile ("sync\n\tisync");
++        }
++    }
++
++#elif defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
++
++#define OP_LO(op,lo)  ((((unsigned)(op)) << 16) | (((unsigned)(lo)) & 0xFFFF))
++#define OP_HI(op,hi)  ((((unsigned)(op)) << 16) | (((unsigned)(hi)) >> 16))
++    {
++        /* The following code applies to all PowerPC and PowerPC64 platforms
++           whose stack layout is based on the AIX ABI.
++
++           Besides (obviously) AIX, this includes
++            Mac OS 9 and BeOS/PPC and Mac OS X PPC (may they rest in peace),
++                which use the 32-bit AIX ABI
++            powerpc64-linux,
++                which uses the 64-bit AIX ABI.
++
++           The actual stack-frame shuffling is implemented out-of-line
++           in the function adjustorCode, in AdjustorAsm.S.
++           Here, we set up an AdjustorStub structure, which
++           is a function descriptor with a pointer to the AdjustorStub
++           struct in the position of the TOC that is loaded
++           into register r2.
++
++           One nice thing about this is that there is _no_ code generated at
++           runtime on the platforms that have function descriptors.
++        */
++        AdjustorStub *adjustorStub;
++        int sz = 0, extra_sz, total_sz;
++
++#if defined(FUNDESCS)
++        adjustorStub = stgMallocBytes(sizeof(AdjustorStub), "createAdjustor");
++#else
++        adjustorStub = allocateExec(sizeof(AdjustorStub),&code);
++#endif
++        adjustor = adjustorStub;
++
++        adjustorStub->code = (void*) &adjustorCode;
++
++#if defined(FUNDESCS)
++            // function descriptors are a cool idea.
++            // We don't need to generate any code at runtime.
++        adjustorStub->toc = adjustorStub;
++#else
++
++            // no function descriptors :-(
++            // We need to do things "by hand".
++#if defined(powerpc_HOST_ARCH)
++            // lis  r2, hi(adjustorStub)
++        adjustorStub->lis = OP_HI(0x3c40, adjustorStub);
++            // ori  r2, r2, lo(adjustorStub)
++        adjustorStub->ori = OP_LO(0x6042, adjustorStub);
++            // lwz r0, code(r2)
++        adjustorStub->lwz = OP_LO(0x8002, (char*)(&adjustorStub->code)
++                                        - (char*)adjustorStub);
++            // mtctr r0
++        adjustorStub->mtctr = 0x7c0903a6;
++            // bctr
++        adjustorStub->bctr = 0x4e800420;
++#else
++        barf("adjustor creation not supported on this platform");
++#endif
++
++        // Flush the Instruction cache:
++        {
++            int n = sizeof(AdjustorStub)/sizeof(unsigned);
++            unsigned *p = (unsigned*)adjustor;
++            while(n--)
++            {
++                __asm__ volatile ("dcbf 0,%0\n\tsync\n\ticbi 0,%0"
++                                    : : "r" (p));
++                p++;
++            }
++            __asm__ volatile ("sync\n\tisync");
++        }
++#endif
++
++            // Calculate the size of the stack frame, in words.
++        sz = totalArgumentSize(typeString);
++
++            // The first eight words of the parameter area
++            // are just "backing store" for the parameters passed in
++            // the GPRs. extra_sz is the number of words beyond those first
++            // 8 words.
++        extra_sz = sz - 8;
++        if(extra_sz < 0)
++            extra_sz = 0;
++
++            // Calculate the total size of the stack frame.
++        total_sz = (6 /* linkage area */
++                  + 8 /* minimum parameter area */
++                  + 2 /* two extra arguments */
++                  + extra_sz)*sizeof(StgWord);
++
++            // align to 16 bytes.
++            // AIX only requires 8 bytes, but who cares?
++        total_sz = (total_sz+15) & ~0xF;
++
++            // Fill in the information that adjustorCode in AdjustorAsm.S
++            // will use to create a new stack frame with the additional args.
++        adjustorStub->hptr = hptr;
++        adjustorStub->wptr = wptr;
++        adjustorStub->negative_framesize = -total_sz;
++        adjustorStub->extrawords_plus_one = extra_sz + 1;
++    }
++
++#elif defined(ia64_HOST_ARCH)
++/*
++    Up to 8 inputs are passed in registers.  We flush the last two inputs to
++    the stack, initially into the 16-byte scratch region left by the caller.
++    We then shuffle the others along by 4 (taking 2 registers for ourselves
++    to save return address and previous function state - we need to come back
++    here on the way out to restore the stack, so this is a real function
++    rather than just a trampoline).
++
++    The function descriptor we create contains the gp of the target function
++    so gp is already loaded correctly.
++
++        [MLX]       alloc r16=ar.pfs,10,2,0
++                    movl r17=wptr
++        [MII]       st8.spill [r12]=r38,8               // spill in6 (out4)
++                    mov r41=r37                         // out7 = in5 (out3)
++                    mov r40=r36;;                       // out6 = in4 (out2)
++        [MII]       st8.spill [r12]=r39                 // spill in7 (out5)
++                    mov.sptk b6=r17,50
++                    mov r38=r34;;                       // out4 = in2 (out0)
++        [MII]       mov r39=r35                         // out5 = in3 (out1)
++                    mov r37=r33                         // out3 = in1 (loc1)
++                    mov r36=r32                         // out2 = in0 (loc0)
++        [MLX]       adds r12=-24,r12                    // update sp
++                    movl r34=hptr;;                     // out0 = hptr
++        [MIB]       mov r33=r16                         // loc1 = ar.pfs
++                    mov r32=b0                          // loc0 = retaddr
++                    br.call.sptk.many b0=b6;;
++
++        [MII]       adds r12=-16,r12
++                    mov b0=r32
++                    mov.i ar.pfs=r33
++        [MFB]       nop.m 0x0
++                    nop.f 0x0
++                    br.ret.sptk.many b0;;
++*/
++
++/* These macros distribute a long constant into the two words of an MLX bundle */
++#define BITS(val,start,count)   (((val) >> (start)) & ((1 << (count))-1))
++#define MOVL_LOWORD(val)        (BITS(val,22,18) << 46)
++#define MOVL_HIWORD(val)        ( (BITS(val,0,7)    << 36)      \
++                                | (BITS(val,7,9)    << 50)      \
++                                | (BITS(val,16,5)   << 45)      \
++                                | (BITS(val,21,1)   << 44)      \
++                                | (BITS(val,40,23))             \
++                                | (BITS(val,63,1)    << 59))
++
++    {
++        StgStablePtr stable;
++        IA64FunDesc *wdesc = (IA64FunDesc *)wptr;
++        StgWord64 wcode = wdesc->ip;
++        IA64FunDesc *fdesc;
++        StgWord64 *code;
++
++        /* we allocate on the Haskell heap since malloc'd memory isn't
++         * executable - argh */
++        /* Allocated memory is word-aligned (8 bytes) but functions on ia64
++         * must be aligned to 16 bytes.  We allocate an extra 8 bytes of
++         * wiggle room so that we can put the code on a 16 byte boundary. */
++        adjustor = stgAllocStable(sizeof(IA64FunDesc)+18*8+8, &stable);
++
++        fdesc = (IA64FunDesc *)adjustor;
++        code = (StgWord64 *)(fdesc + 1);
++        /* add 8 bytes to code if needed to align to a 16-byte boundary */
++        if ((StgWord64)code & 15) code++;
++        fdesc->ip = (StgWord64)code;
++        fdesc->gp = wdesc->gp;
++
++        code[0]  = 0x0000058004288004 | MOVL_LOWORD(wcode);
++        code[1]  = 0x6000000220000000 | MOVL_HIWORD(wcode);
++        code[2]  = 0x029015d818984001;
++        code[3]  = 0x8401200500420094;
++        code[4]  = 0x886011d8189c0001;
++        code[5]  = 0x84011004c00380c0;
++        code[6]  = 0x0250210046013800;
++        code[7]  = 0x8401000480420084;
++        code[8]  = 0x0000233f19a06005 | MOVL_LOWORD((StgWord64)hptr);
++        code[9]  = 0x6000000440000000 | MOVL_HIWORD((StgWord64)hptr);
++        code[10] = 0x0200210020010811;
++        code[11] = 0x1080006800006200;
++        code[12] = 0x0000210018406000;
++        code[13] = 0x00aa021000038005;
++        code[14] = 0x000000010000001d;
++        code[15] = 0x0084000880000200;
++
++        /* save stable pointers in convenient form */
++        code[16] = (StgWord64)hptr;
++        code[17] = (StgWord64)stable;
++    }
++#else
++    barf("adjustor creation not supported on this platform");
++#endif
++    break;
++
++  default:
++    ASSERT(0);
++    break;
++  }
++
++  /* Have fun! */
++  return code;
++}
++
++
++void
++freeHaskellFunctionPtr(void* ptr)
++{
++#if defined(i386_HOST_ARCH)
++ if ( *(unsigned char*)ptr != 0xe8 &&
++      *(unsigned char*)ptr != 0x58 ) {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++ if (*(unsigned char*)ptr == 0xe8) { /* Aha, a ccall adjustor! */
++     freeStablePtr(((AdjustorStub*)ptr)->hptr);
++ } else {
++    freeStablePtr(*((StgStablePtr*)((unsigned char*)ptr + 0x02)));
++ }
++#elif defined(x86_64_HOST_ARCH)
++ if ( *(StgWord16 *)ptr == 0x894d ) {
++     freeStablePtr(*(StgStablePtr*)((StgWord8*)ptr+
++#if defined(mingw32_HOST_OS)
++                                                   0x28
++#else
++                                                   0x20
++#endif
++                                                       ));
++#if !defined(mingw32_HOST_OS)
++ } else if ( *(StgWord16 *)ptr == 0x5141 ) {
++     freeStablePtr(*(StgStablePtr*)((StgWord8*)ptr+0x30));
++#endif
++#if defined(mingw32_HOST_OS)
++ } else if ( *(StgWord16 *)ptr == 0x8348 ) {
++     freeStablePtr(*(StgStablePtr*)((StgWord8*)ptr+0x48));
++#endif
++ } else {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++#elif defined(sparc_HOST_ARCH)
++ if ( *(unsigned long*)ptr != 0x9C23A008UL ) {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++
++ /* Free the stable pointer first..*/
++ freeStablePtr(*((StgStablePtr*)((unsigned long*)ptr + 11)));
++#elif defined(alpha_HOST_ARCH)
++ if ( *(StgWord64*)ptr != 0xa77b0018a61b0010L ) {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++
++ /* Free the stable pointer first..*/
++ freeStablePtr(*((StgStablePtr*)((unsigned char*)ptr + 0x10)));
++#elif defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS)
++ if ( *(StgWord*)ptr != 0x48000008 ) {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++ freeStablePtr(((StgStablePtr*)ptr)[1]);
++#elif defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
++ if ( ((AdjustorStub*)ptr)->code != (StgFunPtr) &adjustorCode ) {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++ freeStablePtr(((AdjustorStub*)ptr)->hptr);
++#elif defined(ia64_HOST_ARCH)
++ IA64FunDesc *fdesc = (IA64FunDesc *)ptr;
++ StgWord64 *code = (StgWord64 *)(fdesc+1);
++
++ if (fdesc->ip != (StgWord64)code) {
++   errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
++   return;
++ }
++ freeStablePtr((StgStablePtr)code[16]);
++ freeStablePtr((StgStablePtr)code[17]);
++ return;
++#else
++ ASSERT(0);
++#endif
++ // Can't write to this memory, it is only executable:
++ // *((unsigned char*)ptr) = '\0';
++
++ freeExec(ptr);
++}
++
++#endif // !USE_LIBFFI_FOR_ADJUSTORS
+diff --git a/rts/Adjustor.h b/rts/Adjustor.h
+deleted file mode 100644
+index a6dcac6d56..0000000000
+--- a/rts/Adjustor.h
++++ /dev/null
+@@ -1,7 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * Common utilities used in adjustor implementations
+- * ---------------------------------------------------------------------------*/
+-
+-#pragma once
+-
+-int totalArgumentSize(const char *typeString);
+diff --git a/rts/ExecPage.c b/rts/ExecPage.c
+deleted file mode 100644
+index 6f5b6e281a..0000000000
+--- a/rts/ExecPage.c
++++ /dev/null
+@@ -1,24 +0,0 @@
+-/*
+- * Utilities for managing dynamically-allocated executable pages.
+- *
+- * These are primarily used to back the adjustor code produced by the native
+- * adjustor implementations.
+- */
+-
+-#include "Rts.h"
+-#include "LinkerInternals.h"
+-#include "sm/OSMem.h"
+-
+-ExecPage *allocateExecPage() {
+-    ExecPage *page = (ExecPage *) mmapAnonForLinker(getPageSize());
+-    return page;
+-}
+-
+-void freezeExecPage(ExecPage *page) {
+-    mmapForLinkerMarkExecutable(page, getPageSize());
+-    flushExec(getPageSize(), page);
+-}
+-
+-void freeExecPage(ExecPage *page) {
+-    munmapForLinker(page, getPageSize(), "freeExecPage");
+-}
+diff --git a/rts/Linker.c b/rts/Linker.c
+index 46356a319e..f8af782057 100644
+--- a/rts/Linker.c
++++ b/rts/Linker.c
+@@ -486,6 +486,16 @@ initLinker_ (int retain_cafs)
+         IF_DEBUG(linker, debugBelch("initLinker: inserting rts symbol %s, %p\n", sym->lbl, sym->addr));
+     }
+ 
++    /* GCC defines a special symbol __dso_handle which is resolved to NULL if
++       referenced from a statically linked module. We need to mimic this, but
++       we cannot use NULL because we use it to mean nonexistent symbols. So we
++       use an arbitrary (hopefully unique) address here.
++    */
++    if (! ghciInsertSymbolTable(WSTR("(GHCi special symbols)"),
++                                symhash, "__dso_handle", (void *)0x12345687, HS_BOOL_FALSE, NULL)) {
++        barf("ghciInsertSymbolTable failed");
++    }
++
+     // Redirect newCAF to newRetainedCAF if retain_cafs is true.
+     if (! ghciInsertSymbolTable(WSTR("(GHCi built-in symbols)"), symhash,
+                                 MAYBE_LEADING_UNDERSCORE_STR("newCAF"),
+@@ -905,17 +915,6 @@ SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
+     ASSERT(symhash != NULL);
+     RtsSymbolInfo *pinfo;
+ 
+-    /* See Note [Resolving __dso_handle] */
+-    if (strcmp(lbl, "__dso_handle") == 0) {
+-        if (dependent) {
+-            return dependent->image;
+-        } else {
+-            // In the case that we don't know which object the reference lives
+-            // in we return a random symbol from the executable image.
+-            return &lookupDependentSymbol;
+-        }
+-    }
+-
+     if (!ghciLookupSymbolInfo(symhash, lbl, &pinfo)) {
+         IF_DEBUG(linker, debugBelch("lookupSymbol: symbol '%s' not found, trying dlsym\n", lbl));
+ 
+@@ -967,22 +966,6 @@ SymbolAddr* lookupDependentSymbol (SymbolName* lbl, ObjectCode *dependent)
+ }
+ #endif /* OBJFORMAT_PEi386 */
+ 
+-/* Note [Resolving __dso_handle]
+- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- * This symbol, which is defined by the C++ ABI, would typically be defined by
+- * the system's dynamic linker to act as a "handle", identifying a particular
+- * loaded dynamic object to the C++ standard library for the purpose of running
+- * destructors on unload. Here we behave the same way that the dynamic linker
+- * would, using some address (here the start address) of the loaded object as
+- * its handle.
+- *
+- * Note that references to __dso_handle may be relocated using
+- * relocations of bounded displacement and therefore __dso_handle must not be
+- * too far from the loaded object's code (hence using its start address).
+- *
+- * See #20493.
+- */
+-
+ /*
+  * Load and relocate the object code for a symbol as necessary.
+  * Symbol name only used for diagnostics output.
+@@ -1103,41 +1086,7 @@ resolveSymbolAddr (pathchar* buffer, int size,
+ #endif /* OBJFORMAT_PEi386 */
+ }
+ 
+-#if defined(mingw32_HOST_OS)
+-
+-//
+-// Returns NULL on failure.
+-//
+-void *
+-mmapAnonForLinker (size_t bytes)
+-{
+-  return VirtualAlloc(NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+-}
+-
+-void
+-munmapForLinker (void *addr, size_t bytes, const char *caller)
+-{
+-  if (VirtualFree(addr, 0, MEM_RELEASE) == 0) {
+-    sysErrorBelch("munmapForLinker: %s: Failed to unmap %zd bytes at %p",
+-                  caller, bytes, addr);
+-  }
+-}
+-
+-void
+-mmapForLinkerMarkExecutable(void *start, size_t len)
+-{
+-  DWORD old;
+-  if (len == 0) {
+-    return;
+-  }
+-  if (VirtualProtect(start, len, PAGE_EXECUTE_READ, &old) == 0) {
+-    sysErrorBelch("mmapForLinkerMarkExecutable: failed to protect %zd bytes at %p",
+-                  len, start);
+-    ASSERT(false);
+-  }
+-}
+-
+-#elif RTS_LINKER_USE_MMAP
++#if RTS_LINKER_USE_MMAP
+ //
+ // Returns NULL on failure.
+ //
+@@ -1159,7 +1108,7 @@ mmapForLinker (size_t bytes, uint32_t prot, uint32_t flags, int fd, int offset)
+ mmap_again:
+ #endif
+ 
+-   if (mmap_32bit_base != NULL) {
++   if (mmap_32bit_base != 0) {
+        map_addr = mmap_32bit_base;
+    }
+ 
+@@ -1168,10 +1117,6 @@ mmap_again:
+    IF_DEBUG(linker,
+             debugBelch("mmapForLinker: \tflags      %#0x\n",
+                        MAP_PRIVATE | tryMap32Bit | fixed | flags));
+-   IF_DEBUG(linker,
+-            debugBelch("mmapForLinker: \tsize       %#0zx\n", bytes));
+-   IF_DEBUG(linker,
+-            debugBelch("mmapForLinker: \tmap_addr   %p\n", map_addr));
+ 
+    result = mmap(map_addr, size, prot,
+                  MAP_PRIVATE|tryMap32Bit|fixed|flags, fd, offset);
+@@ -1184,9 +1129,10 @@ mmap_again:
+ 
+ #if defined(MAP_LOW_MEM)
+    if (RtsFlags.MiscFlags.linkerAlwaysPic) {
+-       /* make no attempt at mapping low memory if we are assuming PIC */
+-   } else if (mmap_32bit_base != NULL) {
+-       if (result != map_addr) {
++   } else if (mmap_32bit_base != 0) {
++       if (result == map_addr) {
++           mmap_32bit_base = (StgWord8*)map_addr + size;
++       } else {
+            if ((W_)result > 0x80000000) {
+                // oops, we were given memory over 2Gb
+                munmap(result,size);
+@@ -1207,7 +1153,9 @@ mmap_again:
+ #endif
+            } else {
+                // hmm, we were given memory somewhere else, but it's
+-               // still under 2Gb so we can use it.
++               // still under 2Gb so we can use it.  Next time, ask
++               // for memory right after the place we just got some
++               mmap_32bit_base = (StgWord8*)result + size;
+            }
+        }
+    } else {
+@@ -1227,7 +1175,10 @@ mmap_again:
+ #elif (defined(aarch64_TARGET_ARCH) || defined(aarch64_HOST_ARCH))
+     // for aarch64 we need to make sure we stay within 4GB of the
+     // mmap_32bit_base, and we also do not want to update it.
+-    if (result != map_addr) {
++//    if (mmap_32bit_base != (void*)&stg_upd_frame_info) {
++    if (result == map_addr) {
++        mmap_32bit_base = (void*)((uintptr_t)map_addr + size);
++    } else {
+         // upper limit 4GB - size of the object file - 1mb wiggle room.
+         if(llabs((uintptr_t)result - (uintptr_t)&stg_upd_frame_info) > (2<<32) - size - (2<<20)) {
+             // not within range :(
+@@ -1238,23 +1189,20 @@ mmap_again:
+             // TODO: some abort/mmap_32bit_base recomputation based on
+             //       if mmap_32bit_base is changed, or still at stg_upd_frame_info
+             goto mmap_again;
++        } else {
++            mmap_32bit_base = (void*)((uintptr_t)result + size);
+         }
+     }
++//   }
+ #endif
+ 
+-    if (mmap_32bit_base != NULL) {
+-       // Next time, ask for memory right after our new mapping to maximize the
+-       // chance that we get low memory.
+-        mmap_32bit_base = (void*) ((uintptr_t)result + size);
+-    }
+-
+-    IF_DEBUG(linker,
++   IF_DEBUG(linker,
+             debugBelch("mmapForLinker: mapped %" FMT_Word
+-                        " bytes starting at %p\n", (W_)size, result));
+-    IF_DEBUG(linker,
+-             debugBelch("mmapForLinker: done\n"));
++                       " bytes starting at %p\n", (W_)size, result));
++   IF_DEBUG(linker,
++            debugBelch("mmapForLinker: done\n"));
+ 
+-    return result;
++   return result;
+ }
+ 
+ /*
+@@ -1302,9 +1250,6 @@ void munmapForLinker (void *addr, size_t bytes, const char *caller)
+  */
+ void mmapForLinkerMarkExecutable(void *start, size_t len)
+ {
+-    if (len == 0) {
+-      return;
+-    }
+     IF_DEBUG(linker,
+              debugBelch("mmapForLinkerMarkExecutable: protecting %" FMT_Word
+                         " bytes starting at %p\n", (W_)len, start));
+@@ -1621,7 +1566,7 @@ preloadObjectFile (pathchar *path)
+     *
+     * See also the misalignment logic for darwin below.
+     */
+-#if defined(darwin_HOST_OS) || defined(openbsd_HOST_OS)
++#if defined(darwin_HOST_OS)
+    image = mmapForLinker(fileSize, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+ #else
+    image = mmapForLinker(fileSize, PROT_READ|PROT_WRITE|PROT_EXEC,
+diff --git a/rts/RtsSymbols.c b/rts/RtsSymbols.c
+index e15a2cf97b..da08da06eb 100644
+--- a/rts/RtsSymbols.c
++++ b/rts/RtsSymbols.c
+@@ -579,11 +579,21 @@ extern char **environ;
+ #define RTS_PROF_SYMBOLS /* empty */
+ #endif
+ 
++#if RTS_LINKER_USE_MMAP
++#define RTS_LINKER_USE_MMAP_SYMBOLS \
++      SymI_HasProto(allocateWrite)                                      \
++      SymI_HasProto(freeWrite)                                          \
++      SymI_HasProto(markExec)
++#else
++#define RTS_LINKER_USE_MMAP_SYMBOLS /* empty */
++#endif
++
+ #define RTS_SYMBOLS                                                     \
+       Maybe_Stable_Names                                                \
+       RTS_TICKY_SYMBOLS                                                 \
+       RTS_PROF_SYMBOLS                                                  \
+       RTS_LIBDW_SYMBOLS                                                 \
++      RTS_LINKER_USE_MMAP_SYMBOLS                                       \
+       SymI_HasProto(StgReturn)                                          \
+       SymI_HasProto(stg_gc_noregs)                                      \
+       SymI_HasProto(stg_ret_v_info)                                     \
+@@ -999,9 +1009,9 @@ extern char **environ;
+       SymI_HasProto(large_alloc_lim)                                    \
+       SymI_HasProto(g0)                                                 \
+       SymI_HasProto(allocate)                                           \
+-      SymI_HasProto(allocateExecPage)                                   \
+-      SymI_HasProto(freezeExecPage)                                     \
+-      SymI_HasProto(freeExecPage)                                       \
++      SymI_HasProto(allocateExec)                                       \
++      SymI_HasProto(flushExec)                                          \
++      SymI_HasProto(freeExec)                                           \
+       SymI_HasProto(getAllocations)                                     \
+       SymI_HasProto(revertCAFs)                                         \
+       SymI_HasProto(RtsFlags)                                           \
+@@ -1042,6 +1052,7 @@ extern char **environ;
+       SymI_HasProto(registerInfoProvList)                               \
+       SymI_HasProto(lookupIPE)                                          \
+       RTS_USER_SIGNALS_SYMBOLS                                          \
++      RTS_LINKER_USE_MMAP_SYMBOLS                                       \
+       RTS_INTCHAR_SYMBOLS
+ 
+ 
+diff --git a/rts/adjustor/LibffiAdjustor.c b/rts/adjustor/LibffiAdjustor.c
+deleted file mode 100644
+index 4b843c1b82..0000000000
+--- a/rts/adjustor/LibffiAdjustor.c
++++ /dev/null
+@@ -1,176 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * libffi-based adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-#include "sm/Storage.h"
+-#include "Hash.h"
+-
+-#include "ffi.h"
+-#include <string.h>
+-
+-/* Maps AdjustorExecutable* to AdjustorWritable*. */
+-static HashTable* allocatedExecs;
+-
+-static AdjustorWritable allocate_adjustor(AdjustorExecutable *exec_ret)
+-{
+-    AdjustorWritable writ;
+-    ffi_closure* cl;
+-
+-    ACQUIRE_SM_LOCK;
+-    cl = writ = ffi_closure_alloc(sizeof(ffi_closure), exec_ret);
+-    if (cl != NULL) {
+-        if (allocatedExecs == NULL) {
+-            allocatedExecs = allocHashTable();
+-        }
+-        insertHashTable(allocatedExecs, (StgWord)*exec_ret, writ);
+-    }
+-    RELEASE_SM_LOCK;
+-    return writ;
+-}
+-
+-static AdjustorWritable exec_to_writable(AdjustorExecutable exec)
+-{
+-    AdjustorWritable writ;
+-    ACQUIRE_SM_LOCK;
+-    if (allocatedExecs == NULL ||
+-        (writ = lookupHashTable(allocatedExecs, (StgWord)exec)) == NULL) {
+-        RELEASE_SM_LOCK;
+-        barf("exec_to_writable: not found");
+-    }
+-    RELEASE_SM_LOCK;
+-    return writ;
+-}
+-
+-static void free_adjustor(AdjustorExecutable exec)
+-{
+-    AdjustorWritable writ;
+-    ffi_closure* cl;
+-    cl = writ = exec_to_writable(exec);
+-    ACQUIRE_SM_LOCK;
+-    removeHashTable(allocatedExecs, (StgWord)exec, writ);
+-    ffi_closure_free(cl);
+-    RELEASE_SM_LOCK;
+-}
+-
+-
+-/* Note [Freeing libffi adjustors]
+- * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- *
+- * HOW ADJUSTORS/CLOSURES WORK ON LIBFFI:
+- * libffi's ffi_closure_alloc() function gives you two pointers to a closure,
+- * 1. the writable pointer, and 2. the executable pointer. You write the
+- * closure into the writable pointer (and ffi_prep_closure_loc() will do this
+- * for you) and you execute it at the executable pointer.
+- *
+- * THE PROBLEM:
+- * The RTS deals only with the executable pointer, but when it comes time to
+- * free the closure, libffi wants the writable pointer back that it gave you
+- * when you allocated it.
+- *
+- * On Linux we used to solve this problem by storing the address of the writable
+- * mapping into itself, then returning both writable and executable pointers
+- * plus 1 machine word for preparing the closure for use by the RTS (see the
+- * Linux version of allocateExec() in rts/sm/Storage.c). When we want to recover
+- * the writable address, we subtract 1 word from the executable address and
+- * fetch. This works because Linux kernel magic gives us two pointers with
+- * different addresses that refer to the same memory. Whatever you write into
+- * the writable address can be read back at the executable address. This method
+- * is very efficient.
+- *
+- * On iOS this breaks for two reasons: 1. the two pointers do not refer to
+- * the same memory (so we can't retrieve anything stored into the writable
+- * pointer if we only have the exec pointer), and 2. libffi's
+- * ffi_closure_alloc() assumes the pointer it has returned you is a
+- * ffi_closure structure and treats it as such: It uses that memory to
+- * communicate with ffi_prep_closure_loc(). On Linux by contrast
+- * ffi_closure_alloc() is viewed simply as a memory allocation, and only
+- * ffi_prep_closure_loc() deals in ffi_closure structures. Each of these
+- * differences is enough make the efficient way used on Linux not work on iOS.
+- * Instead on iOS we use hash tables to recover the writable address from the
+- * executable one. This method is conservative and would almost certainly work
+- * on any platform. This is what we now do everywhere.
+- */
+-void
+-freeHaskellFunctionPtr(void* ptr)
+-{
+-    ffi_closure *cl;
+-
+-    cl = exec_to_writable(ptr);
+-    freeStablePtr(cl->user_data);
+-    stgFree(cl->cif->arg_types);
+-    stgFree(cl->cif);
+-    free_adjustor(ptr);
+-}
+-
+-static ffi_type * char_to_ffi_type(char c)
+-{
+-    switch (c) {
+-    case 'v':  return &ffi_type_void;
+-    case 'f':  return &ffi_type_float;
+-    case 'd':  return &ffi_type_double;
+-    case 'L':  return &ffi_type_sint64;
+-    case 'l':  return &ffi_type_uint64;
+-    case 'W':  return &ffi_type_sint32;
+-    case 'w':  return &ffi_type_uint32;
+-    case 'S':  return &ffi_type_sint16;
+-    case 's':  return &ffi_type_uint16;
+-    case 'B':  return &ffi_type_sint8;
+-    case 'b':  return &ffi_type_uint8;
+-    case 'p':  return &ffi_type_pointer;
+-    default:   barf("char_to_ffi_type: unknown type '%c'", c);
+-    }
+-}
+-
+-void*
+-createAdjustor (int cconv,
+-                StgStablePtr hptr,
+-                StgFunPtr wptr,
+-                char *typeString)
+-{
+-    ffi_cif *cif;
+-    ffi_type **arg_types;
+-    uint32_t n_args, i;
+-    ffi_type *result_type;
+-    ffi_closure *cl;
+-    int r, abi;
+-    void *code;
+-
+-    n_args = strlen(typeString) - 1;
+-    cif = stgMallocBytes(sizeof(ffi_cif), "createAdjustor");
+-    arg_types = stgMallocBytes(n_args * sizeof(ffi_type*), "createAdjustor");
+-
+-    result_type = char_to_ffi_type(typeString[0]);
+-    for (i=0; i < n_args; i++) {
+-        arg_types[i] = char_to_ffi_type(typeString[i+1]);
+-    }
+-    switch (cconv) {
+-#if defined(mingw32_HOST_OS) && defined(i386_HOST_ARCH)
+-    case 0: /* stdcall */
+-        abi = FFI_STDCALL;
+-        break;
+-#endif /* defined(mingw32_HOST_OS) && defined(i386_HOST_ARCH) */
+-    case 1: /* ccall */
+-        abi = FFI_DEFAULT_ABI;
+-        break;
+-    default:
+-        barf("createAdjustor: convention %d not supported on this platform", cconv);
+-    }
+-
+-    r = ffi_prep_cif(cif, abi, n_args, result_type, arg_types);
+-    if (r != FFI_OK) barf("ffi_prep_cif failed: %d", r);
+-
+-    cl = allocate_adjustor(&code);
+-    if (cl == NULL) {
+-        barf("createAdjustor: failed to allocate memory");
+-    }
+-
+-    r = ffi_prep_closure_loc(cl, cif, (void*)wptr, hptr/*userdata*/, code);
+-    if (r != FFI_OK) barf("ffi_prep_closure_loc failed: %d", r);
+-
+-    return (void*)code;
+-}
+diff --git a/rts/adjustor/NativeAlpha.c b/rts/adjustor/NativeAlpha.c
+deleted file mode 100644
+index 46fe4c090d..0000000000
+--- a/rts/adjustor/NativeAlpha.c
++++ /dev/null
+@@ -1,104 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * Alpha architecture adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-
+-/* To get the definition of PAL_imb: */
+-#if defined(linux_HOST_OS)
+-# include <asm/pal.h>
+-#else
+-# include <machine/pal.h>
+-#endif
+-
+-void*
+-createAdjustor(int cconv, StgStablePtr hptr,
+-               StgFunPtr wptr,
+-               char *typeString STG_UNUSED
+-    )
+-{
+-    switch (cconv)
+-    {
+-    case 1: /* _ccall */
+-  /* Magic constant computed by inspecting the code length of
+-     the following assembly language snippet
+-     (offset and machine code prefixed; note that the machine code
+-     shown is longwords stored in little-endian order):
+-
+-  <00>: 46520414        mov     a2, a4
+-  <04>: 46100412        mov     a0, a2
+-  <08>: a61b0020        ldq     a0, 0x20(pv)    # load up hptr
+-  <0c>: 46730415        mov     a3, a5
+-  <10>: a77b0028        ldq     pv, 0x28(pv)    # load up wptr
+-  <14>: 46310413        mov     a1, a3
+-  <18>: 6bfb----        jmp     (pv), <hint>    # jump to wptr (with hint)
+-  <1c>: 00000000                                # padding for alignment
+-  <20>: [8 bytes for hptr quadword]
+-  <28>: [8 bytes for wptr quadword]
+-
+-     The "computed" jump at <08> above is really a jump to a fixed
+-     location.  Accordingly, we place an always-correct hint in the
+-     jump instruction, namely the address offset from <0c> to wptr,
+-     divided by 4, taking the lowest 14 bits.
+-
+-     We only support passing 4 or fewer argument words, for the same
+-     reason described under sparc_HOST_ARCH above by JRS, 21 Aug 01.
+-     On the Alpha the first 6 integer arguments are in a0 through a5,
+-     and the rest on the stack.  Hence we want to shuffle the original
+-     caller's arguments by two.
+-
+-     On the Alpha the calling convention is so complex and dependent
+-     on the callee's signature -- for example, the stack pointer has
+-     to be a multiple of 16 -- that it seems impossible to me [ccshan]
+-     to handle the general case correctly without changing how the
+-     adjustor is called from C.  For now, our solution of shuffling
+-     registers only and ignoring the stack only works if the original
+-     caller passed 4 or fewer argument words.
+-
+-TODO: Depending on how much allocation overhead stgMallocBytes uses for
+-      header information (more precisely, if the overhead is no more than
+-      4 bytes), we should move the first three instructions above down by
+-      4 bytes (getting rid of the nop), hence saving memory. [ccshan]
+-  */
+-    {
+-        ASSERT(((StgWord64)wptr & 3) == 0);
+-        ExecPage *page = allocateExecPage();
+-        StgWord64 *const code = (StgWord64 *) page;
+-
+-        code[0] = 0x4610041246520414L;
+-        code[1] = 0x46730415a61b0020L;
+-        code[2] = 0x46310413a77b0028L;
+-        code[3] = 0x000000006bfb0000L
+-                | (((StgWord32*)(wptr) - (StgWord32*)(code) - 3) & 0x3fff);
+-
+-        code[4] = (StgWord64)hptr;
+-        code[5] = (StgWord64)wptr;
+-
+-        freezeExecPage(page);
+-        /* Ensure that instruction cache is consistent with our new code */
+-        __asm__ volatile("call_pal %0" : : "i" (PAL_imb));
+-        return code;
+-    }
+-
+-    default:
+-        barf("createAdjustor: Unsupported calling convention");
+-    }
+-}
+-
+-void
+-freeHaskellFunctionPtr(void* ptr)
+-{
+-    if ( *(StgWord64*)ptr != 0xa77b0018a61b0010L ) {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-
+-    /* Free the stable pointer first..*/
+-    freeStablePtr(*((StgStablePtr*)((unsigned char*)ptr + 0x10)));
+-
+-    freeExecPage((ExecPage *) ptr);
+-}
+diff --git a/rts/adjustor/NativeAmd64.c b/rts/adjustor/NativeAmd64.c
+deleted file mode 100644
+index 03ff6ef070..0000000000
+--- a/rts/adjustor/NativeAmd64.c
++++ /dev/null
+@@ -1,340 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * AMD64 architecture adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-
+-#if defined(LEADING_UNDERSCORE)
+-#define UNDERSCORE "_"
+-#else
+-#define UNDERSCORE ""
+-#endif
+-
+-/*
+-  Now here's something obscure for you:
+-
+-  When generating an adjustor thunk that uses the C calling
+-  convention, we have to make sure that the thunk kicks off
+-  the process of jumping into Haskell with a tail jump. Why?
+-  Because as a result of jumping in into Haskell we may end
+-  up freeing the very adjustor thunk we came from using
+-  freeHaskellFunctionPtr(). Hence, we better not return to
+-  the adjustor code on our way  out, since it could by then
+-  point to junk.
+-
+-  The fix is readily at hand, just include the opcodes
+-  for the C stack fixup code that we need to perform when
+-  returning in some static piece of memory and arrange
+-  to return to it before tail jumping from the adjustor thunk.
+-*/
+-static void GNUC3_ATTRIBUTE(used) obscure_ccall_wrapper(void)
+-{
+-  __asm__ (
+-   ".globl " UNDERSCORE "obscure_ccall_ret_code\n"
+-   UNDERSCORE "obscure_ccall_ret_code:\n\t"
+-   "addq $0x8, %rsp\n\t"
+-#if defined(mingw32_HOST_OS)
+-   /* On Win64, we had to put the original return address after the
+-      arg 1-4 spill slots, ro now we have to move it back */
+-   "movq 0x20(%rsp), %rcx\n"
+-   "movq %rcx, (%rsp)\n"
+-#endif /* defined(mingw32_HOST_OS) */
+-   "ret"
+-  );
+-}
+-
+-extern void obscure_ccall_ret_code(void);
+-
+-void*
+-createAdjustor(int cconv, StgStablePtr hptr,
+-               StgFunPtr wptr,
+-               char *typeString
+-    )
+-{
+-    switch (cconv)
+-    {
+-    case 1: /* _ccall */
+-#if defined(mingw32_HOST_OS)
+-    /*
+-      stack at call:
+-               argn
+-               ...
+-               arg5
+-               return address
+-               %rcx,%rdx,%r8,%r9 = arg1..arg4
+-
+-      if there are <4 integer args, then we can just push the
+-      StablePtr into %rcx and shuffle the other args up.
+-
+-      If there are >=4 integer args, then we have to flush one arg
+-      to the stack, and arrange to adjust the stack ptr on return.
+-      The stack will be rearranged to this:
+-
+-             argn
+-             ...
+-             arg5
+-             return address  *** <-- dummy arg in stub fn.
+-             arg4
+-             obscure_ccall_ret_code
+-
+-      This unfortunately means that the type of the stub function
+-      must have a dummy argument for the original return address
+-      pointer inserted just after the 4th integer argument.
+-
+-      Code for the simple case:
+-
+-   0:   4d 89 c1                mov    %r8,%r9
+-   3:   49 89 d0                mov    %rdx,%r8
+-   6:   48 89 ca                mov    %rcx,%rdx
+-   9:   f2 0f 10 da             movsd  %xmm2,%xmm3
+-   d:   f2 0f 10 d1             movsd  %xmm1,%xmm2
+-  11:   f2 0f 10 c8             movsd  %xmm0,%xmm1
+-  15:   48 8b 0d 0c 00 00 00    mov    0xc(%rip),%rcx    # 28 <.text+0x28>
+-  1c:   ff 25 0e 00 00 00       jmpq   *0xe(%rip)        # 30 <.text+0x30>
+-  22:   90                      nop
+-  [...]
+-
+-
+-  And the version for >=4 integer arguments:
+-
+-[we want to push the 4th argument (either %r9 or %xmm3, depending on
+- whether it is a floating arg or not) and the return address onto the
+- stack. However, slots 1-4 are reserved for code we call to spill its
+- args 1-4 into, so we can't just push them onto the bottom of the stack.
+- So first put the 4th argument onto the stack, above what will be the
+- spill slots.]
+-   0:   48 83 ec 08             sub    $0x8,%rsp
+-[if non-floating arg, then do this:]
+-   4:   90                      nop
+-   5:   4c 89 4c 24 20          mov    %r9,0x20(%rsp)
+-[else if floating arg then do this:]
+-   4:   f2 0f 11 5c 24 20       movsd  %xmm3,0x20(%rsp)
+-[end if]
+-[Now push the new return address onto the stack]
+-   a:   ff 35 30 00 00 00       pushq  0x30(%rip)        # 40 <.text+0x40>
+-[But the old return address has been moved up into a spill slot, so
+- we need to move it above them]
+-  10:   4c 8b 4c 24 10          mov    0x10(%rsp),%r9
+-  15:   4c 89 4c 24 30          mov    %r9,0x30(%rsp)
+-[Now we do the normal register shuffle-up etc]
+-  1a:   4d 89 c1                mov    %r8,%r9
+-  1d:   49 89 d0                mov    %rdx,%r8
+-  20:   48 89 ca                mov    %rcx,%rdx
+-  23:   f2 0f 10 da             movsd  %xmm2,%xmm3
+-  27:   f2 0f 10 d1             movsd  %xmm1,%xmm2
+-  2b:   f2 0f 10 c8             movsd  %xmm0,%xmm1
+-  2f:   48 8b 0d 12 00 00 00    mov    0x12(%rip),%rcx        # 48 <.text+0x48>
+-  36:   ff 25 14 00 00 00       jmpq   *0x14(%rip)        # 50 <.text+0x50>
+-  3c:   90                      nop
+-  3d:   90                      nop
+-  3e:   90                      nop
+-  3f:   90                      nop
+-  [...]
+-
+-    */
+-    {
+-        // determine whether we have 4 or more integer arguments,
+-        // and therefore need to flush one to the stack.
+-        if ((typeString[0] == '\0') ||
+-            (typeString[1] == '\0') ||
+-            (typeString[2] == '\0') ||
+-            (typeString[3] == '\0')) {
+-
+-            ExecPage *page = allocateExecPage();
+-            StgWord8 *adj_code = (StgWord8*) page;
+-
+-            *(StgInt32 *)adj_code        = 0x49c1894d;
+-            *(StgInt32 *)(adj_code+0x4)  = 0x8948d089;
+-            *(StgInt32 *)(adj_code+0x8)  = 0x100ff2ca;
+-            *(StgInt32 *)(adj_code+0xc)  = 0x100ff2da;
+-            *(StgInt32 *)(adj_code+0x10) = 0x100ff2d1;
+-            *(StgInt32 *)(adj_code+0x14) = 0x0d8b48c8;
+-            *(StgInt32 *)(adj_code+0x18) = 0x0000000c;
+-
+-            *(StgInt32 *)(adj_code+0x1c) = 0x000e25ff;
+-            *(StgInt32 *)(adj_code+0x20) = 0x00000000;
+-            *(StgInt64 *)(adj_code+0x28) = (StgInt64)hptr;
+-            *(StgInt64 *)(adj_code+0x30) = (StgInt64)wptr;
+-
+-            freezeExecPage(page);
+-            return page;
+-        }
+-        else
+-        {
+-            bool fourthFloating = (typeString[3] == 'f' || typeString[3] == 'd');
+-            ExecPage *page = allocateExecPage();
+-            StgWord8 *adj_code = (StgWord8*) page;
+-
+-            *(StgInt32 *)adj_code        = 0x08ec8348;
+-            *(StgInt32 *)(adj_code+0x4)  = fourthFloating ? 0x5c110ff2
+-                                                          : 0x4c894c90;
+-            *(StgInt32 *)(adj_code+0x8)  = 0x35ff2024;
+-            *(StgInt32 *)(adj_code+0xc)  = 0x00000030;
+-            *(StgInt32 *)(adj_code+0x10) = 0x244c8b4c;
+-            *(StgInt32 *)(adj_code+0x14) = 0x4c894c10;
+-            *(StgInt32 *)(adj_code+0x18) = 0x894d3024;
+-            *(StgInt32 *)(adj_code+0x1c) = 0xd08949c1;
+-            *(StgInt32 *)(adj_code+0x20) = 0xf2ca8948;
+-            *(StgInt32 *)(adj_code+0x24) = 0xf2da100f;
+-            *(StgInt32 *)(adj_code+0x28) = 0xf2d1100f;
+-            *(StgInt32 *)(adj_code+0x2c) = 0x48c8100f;
+-            *(StgInt32 *)(adj_code+0x30) = 0x00120d8b;
+-            *(StgInt32 *)(adj_code+0x34) = 0x25ff0000;
+-            *(StgInt32 *)(adj_code+0x38) = 0x00000014;
+-            *(StgInt32 *)(adj_code+0x3c) = 0x90909090;
+-            *(StgInt64 *)(adj_code+0x40) = (StgInt64)obscure_ccall_ret_code;
+-            *(StgInt64 *)(adj_code+0x48) = (StgInt64)hptr;
+-            *(StgInt64 *)(adj_code+0x50) = (StgInt64)wptr;
+-
+-            freezeExecPage(page);
+-            return page;
+-        }
+-    }
+-
+-# else
+-    /*
+-      stack at call:
+-               argn
+-               ...
+-               arg7
+-               return address
+-               %rdi,%rsi,%rdx,%rcx,%r8,%r9 = arg1..arg6
+-
+-      if there are <6 integer args, then we can just push the
+-      StablePtr into %edi and shuffle the other args up.
+-
+-      If there are >=6 integer args, then we have to flush one arg
+-      to the stack, and arrange to adjust the stack ptr on return.
+-      The stack will be rearranged to this:
+-
+-             argn
+-             ...
+-             arg7
+-             return address  *** <-- dummy arg in stub fn.
+-             arg6
+-             obscure_ccall_ret_code
+-
+-      This unfortunately means that the type of the stub function
+-      must have a dummy argument for the original return address
+-      pointer inserted just after the 6th integer argument.
+-
+-      Code for the simple case:
+-
+-   0:   4d 89 c1                mov    %r8,%r9
+-   3:   49 89 c8                mov    %rcx,%r8
+-   6:   48 89 d1                mov    %rdx,%rcx
+-   9:   48 89 f2                mov    %rsi,%rdx
+-   c:   48 89 fe                mov    %rdi,%rsi
+-   f:   48 8b 3d 0a 00 00 00    mov    10(%rip),%rdi
+-  16:   ff 25 0c 00 00 00       jmpq   *12(%rip)
+-  ...
+-  20: .quad 0  # aligned on 8-byte boundary
+-  28: .quad 0  # aligned on 8-byte boundary
+-
+-
+-  And the version for >=6 integer arguments:
+-
+-   0:   41 51                   push   %r9
+-   2:   ff 35 20 00 00 00       pushq  32(%rip)        # 28 <ccall_adjustor+0x28>
+-   8:   4d 89 c1                mov    %r8,%r9
+-   b:   49 89 c8                mov    %rcx,%r8
+-   e:   48 89 d1                mov    %rdx,%rcx
+-  11:   48 89 f2                mov    %rsi,%rdx
+-  14:   48 89 fe                mov    %rdi,%rsi
+-  17:   48 8b 3d 12 00 00 00    mov    18(%rip),%rdi        # 30 <ccall_adjustor+0x30>
+-  1e:   ff 25 14 00 00 00       jmpq   *20(%rip)        # 38 <ccall_adjustor+0x38>
+-  ...
+-  28: .quad 0  # aligned on 8-byte boundary
+-  30: .quad 0  # aligned on 8-byte boundary
+-  38: .quad 0  # aligned on 8-byte boundary
+-    */
+-
+-    {
+-        int i = 0;
+-        char *c;
+-
+-        // determine whether we have 6 or more integer arguments,
+-        // and therefore need to flush one to the stack.
+-        for (c = typeString; *c != '\0'; c++) {
+-            if (*c != 'f' && *c != 'd') i++;
+-            if (i == 6) break;
+-        }
+-
+-        if (i < 6) {
+-            ExecPage *page = allocateExecPage();
+-            StgWord8 *adj_code = (StgWord8*) page;
+-
+-            *(StgInt32 *)adj_code        = 0x49c1894d;
+-            *(StgInt32 *)(adj_code+0x4)  = 0x8948c889;
+-            *(StgInt32 *)(adj_code+0x8)  = 0xf28948d1;
+-            *(StgInt32 *)(adj_code+0xc)  = 0x48fe8948;
+-            *(StgInt32 *)(adj_code+0x10) = 0x000a3d8b;
+-            *(StgInt32 *)(adj_code+0x14) = 0x25ff0000;
+-            *(StgInt32 *)(adj_code+0x18) = 0x0000000c;
+-            *(StgInt64 *)(adj_code+0x20) = (StgInt64)hptr;
+-            *(StgInt64 *)(adj_code+0x28) = (StgInt64)wptr;
+-
+-            freezeExecPage(page);
+-            return page;
+-        }
+-        else
+-        {
+-            ExecPage *page = allocateExecPage();
+-            StgWord8 *adj_code = (StgWord8*) page;
+-
+-            *(StgInt32 *)adj_code        = 0x35ff5141;
+-            *(StgInt32 *)(adj_code+0x4)  = 0x00000020;
+-            *(StgInt32 *)(adj_code+0x8)  = 0x49c1894d;
+-            *(StgInt32 *)(adj_code+0xc)  = 0x8948c889;
+-            *(StgInt32 *)(adj_code+0x10) = 0xf28948d1;
+-            *(StgInt32 *)(adj_code+0x14) = 0x48fe8948;
+-            *(StgInt32 *)(adj_code+0x18) = 0x00123d8b;
+-            *(StgInt32 *)(adj_code+0x1c) = 0x25ff0000;
+-            *(StgInt32 *)(adj_code+0x20) = 0x00000014;
+-
+-            *(StgInt64 *)(adj_code+0x28) = (StgInt64)obscure_ccall_ret_code;
+-            *(StgInt64 *)(adj_code+0x30) = (StgInt64)hptr;
+-            *(StgInt64 *)(adj_code+0x38) = (StgInt64)wptr;
+-
+-            freezeExecPage(page);
+-            return page;
+-        }
+-    }
+-#endif /* defined(mingw32_HOST_OS) */
+-        break;
+-
+-    default:
+-        barf("createAdjustor: Unsupported calling convention: %d", cconv);
+-        break;
+-    }
+-}
+-
+-void freeHaskellFunctionPtr(void* ptr)
+-{
+-    if ( *(StgWord16 *)ptr == 0x894d ) {
+-        freeStablePtr(*(StgStablePtr*)((StgWord8*)ptr+
+-#if defined(mingw32_HOST_OS)
+-                                       0x28
+-#else
+-                                       0x20
+-#endif
+-                          ));
+-#if !defined(mingw32_HOST_OS)
+-    } else if ( *(StgWord16 *)ptr == 0x5141 ) {
+-        freeStablePtr(*(StgStablePtr*)((StgWord8*)ptr+0x30));
+-#endif
+-#if defined(mingw32_HOST_OS)
+-    } else if ( *(StgWord16 *)ptr == 0x8348 ) {
+-        freeStablePtr(*(StgStablePtr*)((StgWord8*)ptr+0x48));
+-#endif
+-    } else {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-
+-    freeExecPage((ExecPage *) ptr);
+-}
+diff --git a/rts/adjustor/NativeIA64.c b/rts/adjustor/NativeIA64.c
+deleted file mode 100644
+index 9fd1991c0a..0000000000
+--- a/rts/adjustor/NativeIA64.c
++++ /dev/null
+@@ -1,165 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * IA64 architecture adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-
+-/* Layout of a function descriptor */
+-typedef struct _IA64FunDesc {
+-    StgWord64 ip;
+-    StgWord64 gp;
+-} IA64FunDesc;
+-
+-static void *
+-stgAllocStable(size_t size_in_bytes, StgStablePtr *stable)
+-{
+-    StgArrBytes* arr;
+-    uint32_t data_size_in_words, total_size_in_words;
+-
+-    /* round up to a whole number of words */
+-    data_size_in_words  = ROUNDUP_BYTES_TO_WDS(size_in_bytes);
+-    total_size_in_words = sizeofW(StgArrBytes) + data_size_in_words;
+-
+-    /* allocate and fill it in */
+-    arr = (StgArrBytes *)allocate(total_size_in_words);
+-    SET_ARR_HDR(arr, &stg_ARR_WORDS_info, CCCS, size_in_bytes);
+-
+-    /* obtain a stable ptr */
+-    *stable = getStablePtr((StgPtr)arr);
+-
+-    /* and return a ptr to the goods inside the array */
+-    return(&(arr->payload));
+-}
+-
+-void*
+-createAdjustor(int cconv, StgStablePtr hptr,
+-               StgFunPtr wptr,
+-               char *typeString
+-#if !defined(powerpc_HOST_ARCH) && !defined(powerpc64_HOST_ARCH) && !defined(x86_64_HOST_ARCH)
+-               STG_UNUSED
+-#endif
+-    )
+-{
+-    void *adjustor = NULL;
+-    void *code = NULL;
+-
+-    switch (cconv)
+-    {
+-    case 1: /* _ccall */
+-/*
+-    Up to 8 inputs are passed in registers.  We flush the last two inputs to
+-    the stack, initially into the 16-byte scratch region left by the caller.
+-    We then shuffle the others along by 4 (taking 2 registers for ourselves
+-    to save return address and previous function state - we need to come back
+-    here on the way out to restore the stack, so this is a real function
+-    rather than just a trampoline).
+-
+-    The function descriptor we create contains the gp of the target function
+-    so gp is already loaded correctly.
+-
+-        [MLX]       alloc r16=ar.pfs,10,2,0
+-                    movl r17=wptr
+-        [MII]       st8.spill [r12]=r38,8               // spill in6 (out4)
+-                    mov r41=r37                         // out7 = in5 (out3)
+-                    mov r40=r36;;                       // out6 = in4 (out2)
+-        [MII]       st8.spill [r12]=r39                 // spill in7 (out5)
+-                    mov.sptk b6=r17,50
+-                    mov r38=r34;;                       // out4 = in2 (out0)
+-        [MII]       mov r39=r35                         // out5 = in3 (out1)
+-                    mov r37=r33                         // out3 = in1 (loc1)
+-                    mov r36=r32                         // out2 = in0 (loc0)
+-        [MLX]       adds r12=-24,r12                    // update sp
+-                    movl r34=hptr;;                     // out0 = hptr
+-        [MIB]       mov r33=r16                         // loc1 = ar.pfs
+-                    mov r32=b0                          // loc0 = retaddr
+-                    br.call.sptk.many b0=b6;;
+-
+-        [MII]       adds r12=-16,r12
+-                    mov b0=r32
+-                    mov.i ar.pfs=r33
+-        [MFB]       nop.m 0x0
+-                    nop.f 0x0
+-                    br.ret.sptk.many b0;;
+-*/
+-
+-/* These macros distribute a long constant into the two words of an MLX bundle */
+-#define BITS(val,start,count)   (((val) >> (start)) & ((1 << (count))-1))
+-#define MOVL_LOWORD(val)        (BITS(val,22,18) << 46)
+-#define MOVL_HIWORD(val)        ( (BITS(val,0,7)    << 36)      \
+-                                | (BITS(val,7,9)    << 50)      \
+-                                | (BITS(val,16,5)   << 45)      \
+-                                | (BITS(val,21,1)   << 44)      \
+-                                | (BITS(val,40,23))             \
+-                                | (BITS(val,63,1)    << 59))
+-
+-    {
+-        StgStablePtr stable;
+-        IA64FunDesc *wdesc = (IA64FunDesc *)wptr;
+-        StgWord64 wcode = wdesc->ip;
+-        IA64FunDesc *fdesc;
+-        StgWord64 *code;
+-
+-        /* we allocate on the Haskell heap since malloc'd memory isn't
+-         * executable - argh */
+-        /* Allocated memory is word-aligned (8 bytes) but functions on ia64
+-         * must be aligned to 16 bytes.  We allocate an extra 8 bytes of
+-         * wiggle room so that we can put the code on a 16 byte boundary. */
+-        adjustor = stgAllocStable(sizeof(IA64FunDesc)+18*8+8, &stable);
+-
+-        fdesc = (IA64FunDesc *)adjustor;
+-        code = (StgWord64 *)(fdesc + 1);
+-        /* add 8 bytes to code if needed to align to a 16-byte boundary */
+-        if ((StgWord64)code & 15) code++;
+-        fdesc->ip = (StgWord64)code;
+-        fdesc->gp = wdesc->gp;
+-
+-        code[0]  = 0x0000058004288004 | MOVL_LOWORD(wcode);
+-        code[1]  = 0x6000000220000000 | MOVL_HIWORD(wcode);
+-        code[2]  = 0x029015d818984001;
+-        code[3]  = 0x8401200500420094;
+-        code[4]  = 0x886011d8189c0001;
+-        code[5]  = 0x84011004c00380c0;
+-        code[6]  = 0x0250210046013800;
+-        code[7]  = 0x8401000480420084;
+-        code[8]  = 0x0000233f19a06005 | MOVL_LOWORD((StgWord64)hptr);
+-        code[9]  = 0x6000000440000000 | MOVL_HIWORD((StgWord64)hptr);
+-        code[10] = 0x0200210020010811;
+-        code[11] = 0x1080006800006200;
+-        code[12] = 0x0000210018406000;
+-        code[13] = 0x00aa021000038005;
+-        code[14] = 0x000000010000001d;
+-        code[15] = 0x0084000880000200;
+-
+-        /* save stable pointers in convenient form */
+-        code[16] = (StgWord64)hptr;
+-        code[17] = (StgWord64)stable;
+-    }
+-#else
+-    barf("adjustor creation not supported on this platform");
+-#endif
+-    break;
+-
+-    default:
+-        barf("createAdjustor: Unsupported calling convention");
+-    }
+-
+-    return code;
+-}
+-
+-void
+-freeHaskellFunctionPtr(void* ptr)
+-{
+-    IA64FunDesc *fdesc = (IA64FunDesc *)ptr;
+-    StgWord64 *code = (StgWord64 *)(fdesc+1);
+-
+-    if (fdesc->ip != (StgWord64)code) {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-    freeStablePtr((StgStablePtr)code[16]);
+-    freeStablePtr((StgStablePtr)code[17]);
+-}
+diff --git a/rts/adjustor/NativePowerPC.c b/rts/adjustor/NativePowerPC.c
+deleted file mode 100644
+index 2e5d60549a..0000000000
+--- a/rts/adjustor/NativePowerPC.c
++++ /dev/null
+@@ -1,406 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * PowerPC architecture adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-#include "Adjustor.h"
+-
+-/* Adjustor logic for PowerPC and PowerPC64 */
+-
+-#if defined(linux_HOST_OS)
+-#include <string.h>
+-#endif
+-
+-// from AdjustorAsm.s
+-// not declared as a function so that AIX-style
+-// fundescs can never get in the way.
+-extern void *adjustorCode;
+-
+-#if defined(linux_HOST_OS)
+-__asm__("obscure_ccall_ret_code:\n\t"
+-        "lwz 1,0(1)\n\t"
+-        "lwz 0,4(1)\n\t"
+-        "mtlr 0\n\t"
+-        "blr");
+-extern void obscure_ccall_ret_code(void);
+-#endif /* defined(linux_HOST_OS) */
+-
+-#if defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH)
+-#if !(defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS))
+-
+-/* !!! !!! WARNING: !!! !!!
+- * This structure is accessed from AdjustorAsm.s
+- * Any changes here have to be mirrored in the offsets there.
+- */
+-
+-typedef struct AdjustorStub {
+-    /* fundesc-based ABIs */
+-#define         FUNDESCS
+-    StgFunPtr       code;
+-    struct AdjustorStub
+-    *toc;
+-    void            *env;
+-    StgStablePtr    hptr;
+-    StgFunPtr       wptr;
+-    StgInt          negative_framesize;
+-    StgInt          extrawords_plus_one;
+-} AdjustorStub;
+-
+-#endif /* !(defined(powerpc_HOST_ARCH) && defined(linux_HOST_OS)) */
+-#endif /* defined(powerpc_HOST_ARCH) || defined(powerpc64_HOST_ARCH) */
+-
+-void*
+-createAdjustor(int cconv, StgStablePtr hptr,
+-               StgFunPtr wptr,
+-               char *typeString
+-    )
+-{
+-    switch (cconv)
+-    {
+-    case 1: /* _ccall */
+-#if defined(linux_HOST_OS)
+-
+-#define OP_LO(op,lo)  ((((unsigned)(op)) << 16) | (((unsigned)(lo)) & 0xFFFF))
+-#define OP_HI(op,hi)  ((((unsigned)(op)) << 16) | (((unsigned)(hi)) >> 16))
+-    {
+-        /* The PowerPC Linux (32-bit) calling convention is annoyingly complex.
+-           We need to calculate all the details of the stack frame layout,
+-           taking into account the types of all the arguments, and then
+-           generate code on the fly. */
+-
+-        int src_gpr = 3, dst_gpr = 5;
+-        int fpr = 3;
+-        int src_offset = 0, dst_offset = 0;
+-        int n = strlen(typeString),i;
+-        int src_locs[n], dst_locs[n];
+-        int frameSize;
+-
+-            /* Step 1:
+-               Calculate where the arguments should go.
+-               src_locs[] will contain the locations of the arguments in the
+-               original stack frame passed to the adjustor.
+-               dst_locs[] will contain the locations of the arguments after the
+-               adjustor runs, on entry to the wrapper proc pointed to by wptr.
+-
+-               This algorithm is based on the one described on page 3-19 of the
+-               System V ABI PowerPC Processor Supplement.
+-            */
+-        for(i=0;typeString[i];i++)
+-        {
+-            char t = typeString[i];
+-            if((t == 'f' || t == 'd') && fpr <= 8)
+-                src_locs[i] = dst_locs[i] = -32-(fpr++);
+-            else
+-            {
+-                if((t == 'l' || t == 'L') && src_gpr <= 9)
+-                {
+-                    if((src_gpr & 1) == 0)
+-                        src_gpr++;
+-                    src_locs[i] = -src_gpr;
+-                    src_gpr += 2;
+-                }
+-                else if((t == 'w' || t == 'W') && src_gpr <= 10)
+-                {
+-                    src_locs[i] = -(src_gpr++);
+-                }
+-                else
+-                {
+-                    if(t == 'l' || t == 'L' || t == 'd')
+-                    {
+-                        if(src_offset % 8)
+-                            src_offset += 4;
+-                    }
+-                    src_locs[i] = src_offset;
+-                    src_offset += (t == 'l' || t == 'L' || t == 'd') ? 8 : 4;
+-                }
+-
+-                    if((t == 'l' || t == 'L') && dst_gpr <= 9)
+-                {
+-                    if((dst_gpr & 1) == 0)
+-                        dst_gpr++;
+-                    dst_locs[i] = -dst_gpr;
+-                    dst_gpr += 2;
+-                }
+-                else if((t == 'w' || t == 'W') && dst_gpr <= 10)
+-                {
+-                    dst_locs[i] = -(dst_gpr++);
+-                }
+-                else
+-                {
+-                    if(t == 'l' || t == 'L' || t == 'd')
+-                    {
+-                        if(dst_offset % 8)
+-                            dst_offset += 4;
+-                    }
+-                    dst_locs[i] = dst_offset;
+-                    dst_offset += (t == 'l' || t == 'L' || t == 'd') ? 8 : 4;
+-                }
+-            }
+-        }
+-
+-        frameSize = dst_offset + 8;
+-        frameSize = (frameSize+15) & ~0xF;
+-
+-            /* Step 2:
+-               Build the adjustor.
+-            */
+-                    // allocate space for at most 4 insns per parameter
+-                    // plus 14 more instructions.
+-        ExecPage *page = allocateExecPage();
+-        unsigned *code = adjustor;
+-
+-        *code++ = 0x48000008; // b *+8
+-            // * Put the hptr in a place where freeHaskellFunctionPtr
+-            //   can get at it.
+-        *code++ = (unsigned) hptr;
+-
+-            // * save the link register
+-        *code++ = 0x7c0802a6; // mflr r0;
+-        *code++ = 0x90010004; // stw r0, 4(r1);
+-            // * and build a new stack frame
+-        *code++ = OP_LO(0x9421, -frameSize); // stwu r1, -frameSize(r1)
+-
+-            // * now generate instructions to copy arguments
+-            //   from the old stack frame into the new stack frame.
+-        for(i=n-1;i>=0;i--)
+-        {
+-            if(src_locs[i] < -32)
+-                ASSERT(dst_locs[i] == src_locs[i]);
+-            else if(src_locs[i] < 0)
+-            {
+-                // source in GPR.
+-                ASSERT(typeString[i] != 'f' && typeString[i] != 'd');
+-                if(dst_locs[i] < 0)
+-                {
+-                    ASSERT(dst_locs[i] > -32);
+-                        // dst is in GPR, too.
+-
+-                    if(typeString[i] == 'l' || typeString[i] == 'L')
+-                    {
+-                            // mr dst+1, src+1
+-                        *code++ = 0x7c000378
+-                                | ((-dst_locs[i]+1) << 16)
+-                                | ((-src_locs[i]+1) << 11)
+-                                | ((-src_locs[i]+1) << 21);
+-                    }
+-                    // mr dst, src
+-                    *code++ = 0x7c000378
+-                            | ((-dst_locs[i]) << 16)
+-                            | ((-src_locs[i]) << 11)
+-                            | ((-src_locs[i]) << 21);
+-                }
+-                else
+-                {
+-                    if(typeString[i] == 'l' || typeString[i] == 'L')
+-                    {
+-                            // stw src+1, dst_offset+4(r1)
+-                        *code++ = 0x90010000
+-                                | ((-src_locs[i]+1) << 21)
+-                                | (dst_locs[i] + 4);
+-                    }
+-
+-                        // stw src, dst_offset(r1)
+-                    *code++ = 0x90010000
+-                            | ((-src_locs[i]) << 21)
+-                            | (dst_locs[i] + 8);
+-                }
+-            }
+-            else
+-            {
+-                ASSERT(dst_locs[i] >= 0);
+-                ASSERT(typeString[i] != 'f' && typeString[i] != 'd');
+-
+-                if(typeString[i] == 'l' || typeString[i] == 'L')
+-                {
+-                    // lwz r0, src_offset(r1)
+-                        *code++ = 0x80010000
+-                                | (src_locs[i] + frameSize + 8 + 4);
+-                    // stw r0, dst_offset(r1)
+-                        *code++ = 0x90010000
+-                                | (dst_locs[i] + 8 + 4);
+-                    }
+-                // lwz r0, src_offset(r1)
+-                    *code++ = 0x80010000
+-                            | (src_locs[i] + frameSize + 8);
+-                // stw r0, dst_offset(r1)
+-                    *code++ = 0x90010000
+-                            | (dst_locs[i] + 8);
+-           }
+-        }
+-
+-            // * hptr will be the new first argument.
+-            // lis r3, hi(hptr)
+-        *code++ = OP_HI(0x3c60, hptr);
+-            // ori r3,r3,lo(hptr)
+-        *code++ = OP_LO(0x6063, hptr);
+-
+-            // * we need to return to a piece of code
+-            //   which will tear down the stack frame.
+-            // lis r11,hi(obscure_ccall_ret_code)
+-        *code++ = OP_HI(0x3d60, obscure_ccall_ret_code);
+-            // ori r11,r11,lo(obscure_ccall_ret_code)
+-        *code++ = OP_LO(0x616b, obscure_ccall_ret_code);
+-            // mtlr r11
+-        *code++ = 0x7d6803a6;
+-
+-            // * jump to wptr
+-            // lis r11,hi(wptr)
+-        *code++ = OP_HI(0x3d60, wptr);
+-            // ori r11,r11,lo(wptr)
+-        *code++ = OP_LO(0x616b, wptr);
+-            // mtctr r11
+-        *code++ = 0x7d6903a6;
+-            // bctr
+-        *code++ = 0x4e800420;
+-
+-        freezeExecPage(page);
+-
+-        // Flush the Instruction cache:
+-        {
+-            unsigned *p = adjustor;
+-            while(p < code)
+-            {
+-                __asm__ volatile ("dcbf 0,%0\n\tsync\n\ticbi 0,%0"
+-                                 : : "r" (p));
+-                p++;
+-            }
+-            __asm__ volatile ("sync\n\tisync");
+-        }
+-    }
+-
+-#else
+-
+-#define OP_LO(op,lo)  ((((unsigned)(op)) << 16) | (((unsigned)(lo)) & 0xFFFF))
+-#define OP_HI(op,hi)  ((((unsigned)(op)) << 16) | (((unsigned)(hi)) >> 16))
+-    {
+-        /* The following code applies to all PowerPC and PowerPC64 platforms
+-           whose stack layout is based on the AIX ABI.
+-
+-           Besides (obviously) AIX, this includes
+-            Mac OS 9 and BeOS/PPC and Mac OS X PPC (may they rest in peace),
+-                which use the 32-bit AIX ABI
+-            powerpc64-linux,
+-                which uses the 64-bit AIX ABI.
+-
+-           The actual stack-frame shuffling is implemented out-of-line
+-           in the function adjustorCode, in AdjustorAsm.S.
+-           Here, we set up an AdjustorStub structure, which
+-           is a function descriptor with a pointer to the AdjustorStub
+-           struct in the position of the TOC that is loaded
+-           into register r2.
+-
+-           One nice thing about this is that there is _no_ code generated at
+-           runtime on the platforms that have function descriptors.
+-        */
+-        AdjustorStub *adjustorStub;
+-        int sz = 0, extra_sz, total_sz;
+-
+-#if defined(FUNDESCS)
+-        adjustorStub = stgMallocBytes(sizeof(AdjustorStub), "createAdjustor");
+-#else
+-        ExecPage *page = allocateExecPage();
+-        adjustorStub = (AdjustorStub *) page;
+-#endif /* defined(FUNDESCS) */
+-        adjustor = adjustorStub;
+-
+-        adjustorStub->code = (void*) &adjustorCode;
+-
+-#if defined(FUNDESCS)
+-            // function descriptors are a cool idea.
+-            // We don't need to generate any code at runtime.
+-        adjustorStub->toc = adjustorStub;
+-#else
+-
+-            // no function descriptors :-(
+-            // We need to do things "by hand".
+-#if defined(powerpc_HOST_ARCH)
+-            // lis  r2, hi(adjustorStub)
+-        adjustorStub->lis = OP_HI(0x3c40, adjustorStub);
+-            // ori  r2, r2, lo(adjustorStub)
+-        adjustorStub->ori = OP_LO(0x6042, adjustorStub);
+-            // lwz r0, code(r2)
+-        adjustorStub->lwz = OP_LO(0x8002, (char*)(&adjustorStub->code)
+-                                        - (char*)adjustorStub);
+-            // mtctr r0
+-        adjustorStub->mtctr = 0x7c0903a6;
+-            // bctr
+-        adjustorStub->bctr = 0x4e800420;
+-
+-        freezeExecPage(page);
+-#else
+-        barf("adjustor creation not supported on this platform");
+-#endif /* defined(powerpc_HOST_ARCH) */
+-
+-        // Flush the Instruction cache:
+-        {
+-            int n = sizeof(AdjustorStub)/sizeof(unsigned);
+-            unsigned *p = (unsigned*)adjustor;
+-            while(n--)
+-            {
+-                __asm__ volatile ("dcbf 0,%0\n\tsync\n\ticbi 0,%0"
+-                                    : : "r" (p));
+-                p++;
+-            }
+-            __asm__ volatile ("sync\n\tisync");
+-        }
+-#endif /* defined(FUNDESCS) */
+-
+-            // Calculate the size of the stack frame, in words.
+-        sz = totalArgumentSize(typeString);
+-
+-            // The first eight words of the parameter area
+-            // are just "backing store" for the parameters passed in
+-            // the GPRs. extra_sz is the number of words beyond those first
+-            // 8 words.
+-        extra_sz = sz - 8;
+-        if(extra_sz < 0)
+-            extra_sz = 0;
+-
+-            // Calculate the total size of the stack frame.
+-        total_sz = (6 /* linkage area */
+-                  + 8 /* minimum parameter area */
+-                  + 2 /* two extra arguments */
+-                  + extra_sz)*sizeof(StgWord);
+-
+-            // align to 16 bytes.
+-            // AIX only requires 8 bytes, but who cares?
+-        total_sz = (total_sz+15) & ~0xF;
+-
+-            // Fill in the information that adjustorCode in AdjustorAsm.S
+-            // will use to create a new stack frame with the additional args.
+-        adjustorStub->hptr = hptr;
+-        adjustorStub->wptr = wptr;
+-        adjustorStub->negative_framesize = -total_sz;
+-        adjustorStub->extrawords_plus_one = extra_sz + 1;
+-
+-        return code;
+-    }
+-
+-    default:
+-        barf("createAdjustor: Unsupported calling convention");
+-    }
+-}
+-
+-void
+-freeHaskellFunctionPtr(void* ptr)
+-{
+-#if defined(linux_HOST_OS)
+-    if ( *(StgWord*)ptr != 0x48000008 ) {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-    freeStablePtr(((StgStablePtr*)ptr)[1]);
+-#else
+-    if ( ((AdjustorStub*)ptr)->code != (StgFunPtr) &adjustorCode ) {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-    freeStablePtr(((AdjustorStub*)ptr)->hptr);
+-#endif
+-
+-    freeExecPage(ptr);
+-}
+diff --git a/rts/adjustor/NativeSparc.c b/rts/adjustor/NativeSparc.c
+deleted file mode 100644
+index 059455d050..0000000000
+--- a/rts/adjustor/NativeSparc.c
++++ /dev/null
+@@ -1,106 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * SPARC architecture adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-
+-void*
+-createAdjustor(int cconv, StgStablePtr hptr,
+-               StgFunPtr wptr,
+-               char *typeString STG_UNUSED
+-    )
+-{
+-    switch (cconv)
+-    {
+-    case 1: /* _ccall */
+-  /* Magic constant computed by inspecting the code length of the following
+-     assembly language snippet (offset and machine code prefixed):
+-
+-     <00>: 9C23A008   sub   %sp, 8, %sp         ! make room for %o4/%o5 in caller's frame
+-     <04>: DA23A060   st    %o5, [%sp + 96]     ! shift registers by 2 positions
+-     <08>: D823A05C   st    %o4, [%sp + 92]
+-     <0C>: 9A10000B   mov   %o3, %o5
+-     <10>: 9810000A   mov   %o2, %o4
+-     <14>: 96100009   mov   %o1, %o3
+-     <18>: 94100008   mov   %o0, %o2
+-     <1C>: 13000000   sethi %hi(wptr), %o1      ! load up wptr (1 of 2)
+-     <20>: 11000000   sethi %hi(hptr), %o0      ! load up hptr (1 of 2)
+-     <24>: 81C26000   jmp   %o1 + %lo(wptr)     ! jump to wptr (load 2 of 2)
+-     <28>: 90122000   or    %o0, %lo(hptr), %o0 ! load up hptr (2 of 2, delay slot)
+-     <2C>  00000000                             ! place for getting hptr back easily
+-
+-     ccall'ing on SPARC is easy, because we are quite lucky to push a
+-     multiple of 8 bytes (1 word hptr + 1 word dummy arg) in front of the
+-     existing arguments (note that %sp must stay double-word aligned at
+-     all times, see ABI spec at http://www.sparc.org/standards/psABI3rd.pdf).
+-     To do this, we extend the *caller's* stack frame by 2 words and shift
+-     the output registers used for argument passing (%o0 - %o5, we are a *leaf*
+-     procedure because of the tail-jump) by 2 positions. This makes room in
+-     %o0 and %o1 for the additional arguments, namely  hptr and a dummy (used
+-     for destination addr of jump on SPARC, return address on x86, ...). This
+-     shouldn't cause any problems for a C-like caller: alloca is implemented
+-     similarly, and local variables should be accessed via %fp, not %sp. In a
+-     nutshell: This should work! (Famous last words! :-)
+-  */
+-    {
+-        ExecPage *page = allocateExecPage();
+-        unsigned long *const adj_code = (unsigned long *) page;
+-
+-        adj_code[ 0]  = 0x9C23A008UL;   /* sub   %sp, 8, %sp         */
+-        adj_code[ 1]  = 0xDA23A060UL;   /* st    %o5, [%sp + 96]     */
+-        adj_code[ 2]  = 0xD823A05CUL;   /* st    %o4, [%sp + 92]     */
+-        adj_code[ 3]  = 0x9A10000BUL;   /* mov   %o3, %o5            */
+-        adj_code[ 4]  = 0x9810000AUL;   /* mov   %o2, %o4            */
+-        adj_code[ 5]  = 0x96100009UL;   /* mov   %o1, %o3            */
+-        adj_code[ 6]  = 0x94100008UL;   /* mov   %o0, %o2            */
+-        adj_code[ 7]  = 0x13000000UL;   /* sethi %hi(wptr), %o1      */
+-        adj_code[ 7] |= ((unsigned long)wptr) >> 10;
+-        adj_code[ 8]  = 0x11000000UL;   /* sethi %hi(hptr), %o0      */
+-        adj_code[ 8] |= ((unsigned long)hptr) >> 10;
+-        adj_code[ 9]  = 0x81C26000UL;   /* jmp   %o1 + %lo(wptr)     */
+-        adj_code[ 9] |= ((unsigned long)wptr) & 0x000003FFUL;
+-        adj_code[10]  = 0x90122000UL;   /* or    %o0, %lo(hptr), %o0 */
+-        adj_code[10] |= ((unsigned long)hptr) & 0x000003FFUL;
+-
+-        adj_code[11]  = (unsigned long)hptr;
+-
+-        freezeExecPage(page);
+-
+-        /* flush cache */
+-        asm("flush %0" : : "r" (adj_code     ));
+-        asm("flush %0" : : "r" (adj_code +  2));
+-        asm("flush %0" : : "r" (adj_code +  4));
+-        asm("flush %0" : : "r" (adj_code +  6));
+-        asm("flush %0" : : "r" (adj_code + 10));
+-
+-        /* max. 5 instructions latency, and we need at >= 1 for returning */
+-        asm("nop");
+-        asm("nop");
+-        asm("nop");
+-        asm("nop");
+-
+-        return page;
+-    }
+-
+-    default:
+-        barf("createAdjustor: Unsupported calling convention");
+-    }
+-}
+-
+-void
+-freeHaskellFunctionPtr(void* ptr)
+-{
+-    if ( *(unsigned long*)ptr != 0x9C23A008UL ) {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-
+-    /* Free the stable pointer first..*/
+-    freeStablePtr(*((StgStablePtr*)((unsigned long*)ptr + 11)));
+-
+-    freeExecPage(ptr);
+-}
+diff --git a/rts/adjustor/Nativei386.c b/rts/adjustor/Nativei386.c
+deleted file mode 100644
+index af6d842be8..0000000000
+--- a/rts/adjustor/Nativei386.c
++++ /dev/null
+@@ -1,134 +0,0 @@
+-/* -----------------------------------------------------------------------------
+- * i386 architecture adjustor thunk logic.
+- * ---------------------------------------------------------------------------*/
+-
+-#include "PosixSource.h"
+-#include "Rts.h"
+-
+-#include "RtsUtils.h"
+-#include "StablePtr.h"
+-#include "Adjustor.h"
+-
+-#if defined(_WIN32)
+-#include <windows.h>
+-#endif
+-
+-extern void adjustorCode(void);
+-
+-/* !!! !!! WARNING: !!! !!!
+- * This structure is accessed from AdjustorAsm.s
+- * Any changes here have to be mirrored in the offsets there.
+- */
+-
+-typedef struct AdjustorStub {
+-    unsigned char   call[8];
+-    StgStablePtr    hptr;
+-    StgFunPtr       wptr;
+-    StgInt          frame_size;
+-    StgInt          argument_size;
+-} AdjustorStub;
+-
+-void*
+-createAdjustor(int cconv, StgStablePtr hptr,
+-               StgFunPtr wptr,
+-               char *typeString STG_UNUSED
+-    )
+-{
+-    switch (cconv)
+-    {
+-    case 0: /* _stdcall */
+-#if !defined(darwin_HOST_OS)
+-    /* Magic constant computed by inspecting the code length of
+-       the following assembly language snippet
+-       (offset and machine code prefixed):
+-
+-     <0>:       58                popl   %eax              # temp. remove ret addr..
+-     <1>:       68 fd fc fe fa    pushl  0xfafefcfd        # constant is large enough to
+-                                                           # hold a StgStablePtr
+-     <6>:       50                pushl  %eax              # put back ret. addr
+-     <7>:       b8 fa ef ff 00    movl   $0x00ffeffa, %eax # load up wptr
+-     <c>:       ff e0             jmp    %eax              # and jump to it.
+-                # the callee cleans up the stack
+-    */
+-
+-    {
+-        ExecPage *page = allocateExecPage();
+-        uint8_t *adj_code = (uint8_t *) page;
+-        adj_code[0x00] = 0x58;  /* popl %eax  */
+-
+-        adj_code[0x01] = 0x68;  /* pushl hptr (which is a dword immediate ) */
+-        *((StgStablePtr*)(adj_code + 0x02)) = (StgStablePtr)hptr;
+-
+-        adj_code[0x06] = 0x50; /* pushl %eax */
+-
+-        adj_code[0x07] = 0xb8; /* movl  $wptr, %eax */
+-        *((StgFunPtr*)(adj_code + 0x08)) = (StgFunPtr)wptr;
+-
+-        adj_code[0x0c] = 0xff; /* jmp %eax */
+-        adj_code[0x0d] = 0xe0;
+-
+-        freezeExecPage(page);
+-        return page;
+-    }
+-#endif /* !defined(darwin_HOST_OS) */
+-
+-    case 1: /* _ccall */
+-    {
+-        /*
+-          Most of the trickiness here is due to the need to keep the
+-          stack pointer 16-byte aligned (see #5250).  That means we
+-          can't just push another argument on the stack and call the
+-          wrapper, we may have to shuffle the whole argument block.
+-
+-          We offload most of the work to AdjustorAsm.S.
+-        */
+-        ExecPage *page = allocateExecPage();
+-        AdjustorStub *adjustorStub = (AdjustorStub *) page;
+-        int sz = totalArgumentSize(typeString);
+-
+-        adjustorStub->call[0] = 0xe8;
+-        *(long*)&adjustorStub->call[1] = ((char*)&adjustorCode) - ((char*)page + 5);
+-        adjustorStub->hptr = hptr;
+-        adjustorStub->wptr = wptr;
+-
+-            // The adjustor puts the following things on the stack:
+-            // 1.) %ebp link
+-            // 2.) padding and (a copy of) the arguments
+-            // 3.) a dummy argument
+-            // 4.) hptr
+-            // 5.) return address (for returning to the adjustor)
+-            // All these have to add up to a multiple of 16.
+-
+-            // first, include everything in frame_size
+-        adjustorStub->frame_size = sz * 4 + 16;
+-            // align to 16 bytes
+-        adjustorStub->frame_size = (adjustorStub->frame_size + 15) & ~15;
+-            // only count 2.) and 3.) as part of frame_size
+-        adjustorStub->frame_size -= 12;
+-        adjustorStub->argument_size = sz;
+-
+-        freezeExecPage(page);
+-        return page;
+-    }
+-
+-    default:
+-        barf("createAdjustor: Unsupported calling convention");
+-    }
+-}
+-
+-void
+-freeHaskellFunctionPtr(void* ptr)
+-{
+-    if ( *(unsigned char*)ptr != 0xe8 &&
+-         *(unsigned char*)ptr != 0x58 ) {
+-        errorBelch("freeHaskellFunctionPtr: not for me, guv! %p\n", ptr);
+-        return;
+-    }
+-    if (*(unsigned char*)ptr == 0xe8) { /* Aha, a ccall adjustor! */
+-        freeStablePtr(((AdjustorStub*)ptr)->hptr);
+-    } else {
+-        freeStablePtr(*((StgStablePtr*)((unsigned char*)ptr + 0x02)));
+-    }
+-
+-    freeExecPage((ExecPage *) ptr);
+-}
+diff --git a/rts/ghc.mk b/rts/ghc.mk
+index 9c535def5a..ccf932b609 100644
+--- a/rts/ghc.mk
++++ b/rts/ghc.mk
+@@ -17,7 +17,7 @@
+ rts_dist_HC = $(GHC_STAGE1)
+ 
+ rts_INSTALL_INFO = rts
+-rts_VERSION = 1.0.2
++rts_VERSION = 1.0.1
+ 
+ # Minimum supported Windows version.
+ # These numbers can be found at:
+@@ -54,35 +54,15 @@ rts_CMM_SRCS := $(wildcard rts/*.cmm)
+ 
+ # Don't compile .S files when bootstrapping a new arch
+ ifneq "$(PORTING_HOST)" "YES"
+-
++ifneq "$(findstring $(TargetArch_CPP), i386 powerpc powerpc64)" ""
++rts_S_SRCS += rts/AdjustorAsm.S
++endif
++# this matches substrings of powerpc64le, including "powerpc" and "powerpc64"
++ifneq "$(findstring $(TargetArch_CPP), powerpc64le s390x riscv64)" ""
+ # unregisterised builds use the mini interpreter
+ ifneq "$(GhcUnregisterised)" "YES"
+ rts_S_SRCS += rts/StgCRunAsm.S
+ endif
+-
+-# select adjustor implementation. This much match the logic in rts.cabal.in.
+-ifneq "$(CLEANING)" "YES"
+-# N.B. we don't source config.mk when CLEANING=YES so none of the below
+-# variables will be set. See #20166.
+-ifeq "$(UseLibffiForAdjustors)" "YES"
+-rts_C_SRCS += rts/adjustor/LibffiAdjustor.c
+-else
+-ifneq "$(findstring $(TargetArch_CPP), i386)" ""
+-rts_S_SRCS += rts/AdjustorAsm.S
+-rts_C_SRCS += rts/adjustor/Nativei386.c
+-else
+-ifneq "$(findstring $(TargetArch_CPP), x86_64)" ""
+-rts_C_SRCS += rts/adjustor/NativeAmd64.c
+-else
+-ifneq "$(findstring $(TargetArch_CPP), powerpc64le powerpc)" ""
+-rts_S_SRCS += rts/AdjustorAsm.S
+-rts_C_SRCS += rts/adjustor/NativePowerPC.c
+-else
+-$(error Target architecture has no native adjustor implementation)
+-endif
+-endif
+-endif
+-endif
+ endif
+ endif
+ 
+@@ -402,6 +382,10 @@ rts_CC_OPTS += -DNOSMP
+ rts_HC_OPTS += -optc-DNOSMP
+ endif
+ 
++ifeq "$(UseLibFFIForAdjustors)" "YES"
++rts_CC_OPTS += -DUSE_LIBFFI_FOR_ADJUSTORS
++endif
++
+ # We *want* type-checking of hand-written cmm.
+ rts_HC_OPTS += -dcmm-lint
+ 
+diff --git a/rts/package.conf.in b/rts/package.conf.in
+index 9bdbf3659a..3357c11c40 100644
+--- a/rts/package.conf.in
++++ b/rts/package.conf.in
+@@ -5,7 +5,7 @@
+ #include "MachDeps.h"
+ 
+ name:           rts
+-version:        1.0.2
++version:        1.0.1
+ id:             rts
+ key:            rts
+ license:        BSD-3-Clause
+@@ -35,7 +35,7 @@ extra-libraries:
+ #if defined(HAVE_LIBDL)
+                               , "dl"
+ #endif
+-#if defined(HAVE_SYSTEM_LIBFFI)
++#if defined(HAVE_LIBFFI)
+                               , "ffi"
+ #endif
+ #if HAVE_LIBNUMA
+diff --git a/rts/rts.cabal.in b/rts/rts.cabal.in
+index a2acf27cb5..efc861058d 100644
+--- a/rts/rts.cabal.in
++++ b/rts/rts.cabal.in
+@@ -1,6 +1,6 @@
+ cabal-version: 3.0
+ name: rts
+-version: 1.0.2
++version: 1.0.1
+ license: BSD-3-Clause
+ maintainer: glasgow-haskell-users@haskell.org
+ build-type: Simple
+@@ -10,10 +10,8 @@ flag librt
+   default: @CabalHaveLibrt@
+ flag libdl
+   default: @CabalHaveLibdl@
+-flag use-system-libffi
+-  default: @CabalUseSystemLibFFI@
+-flag libffi-adjustors
+-  default: @CabalLibffiAdjustors@
++flag ffi
++  default: @CabalHaveLibffi@
+ flag need-pthread
+   default: @CabalNeedLibpthread@
+ flag libbfd
+@@ -59,17 +57,10 @@ library
+     -- expects the unit-id to be
+     -- set without version
+     ghc-options: -this-unit-id rts
+-
+-    -- If we are using an in-tree libffi then we must declare it as a bundled
+-    -- library to ensure that Cabal installs it.
+-    if !flag(use-system-libffi)
+-      if os(windows)
+-        extra-bundled-libraries: Cffi-6
+-      else
+-        extra-bundled-libraries: Cffi
+-      install-includes: ffi.h ffitarget.h
+-      -- ^ see Note [Packaging libffi headers] in
+-      -- GHC.Driver.CodeOutput.
++    if os(windows)
++      extra-bundled-libraries: Cffi-6
++    else
++      extra-bundled-libraries: Cffi
+ 
+     -- The make build system does something special in config.mk.in
+     -- for generating profiled, debugged, etc builds of those
+@@ -109,7 +100,7 @@ library
+        extra-libraries: rt
+     if flag(libdl)
+        extra-libraries: dl
+-    if flag(use-system-libffi)
++    if flag(ffi)
+        extra-libraries: ffi
+     if os(windows)
+        extra-libraries:
+@@ -154,10 +145,9 @@ library
+     install-includes: Cmm.h HsFFI.h MachDeps.h Rts.h RtsAPI.h Stg.h
+                       ghcautoconf.h ghcconfig.h ghcplatform.h ghcversion.h
+                       -- ^ from ../includes
+-                      DerivedConstants.h
++                      DerivedConstants.h ffi.h ffitarget.h
+                       -- ^ generated
+                       rts/Adjustor.h
+-                      rts/ExecPage.h
+                       rts/BlockSignals.h
+                       rts/Bytecodes.h
+                       rts/Config.h
+@@ -432,30 +422,12 @@ library
+                  -- AutoApply is generated
+                  AutoApply.cmm
+ 
+-    -- Adjustor stuff
+-    if flag(libffi-adjustors)
+-      c-sources: adjustor/LibffiAdjustor.c
+-    else
+-      -- Use GHC's native adjustors
+-      if arch(i386)
+-        asm-sources: AdjustorAsm.S
+-        c-sources: adjustor/Nativei386.c
+-      if arch(x86_64)
+-        c-sources: adjustor/NativeAmd64.c
+-      if arch(ppc) || arch(ppc64)
+-        asm-sources: AdjustorAsm.S
+-        c-sources: adjustor/NativePowerPC.c
+-      if arch(ia64)
+-        c-sources: adjustor/NativeIA64.c
+-      if arch(sparc)
+-        c-sources: adjustor/NativeSparc.c
+-
+-    -- Use assembler STG entrypoint on archictures where it is used
++    if arch(i386) || arch(ppc) || arch(ppc64)
++       asm-sources: AdjustorAsm.S
+     if arch(ppc) || arch(ppc64) || arch(s390x) || arch(riscv64)
+-      asm-sources: StgCRunAsm.S
++       asm-sources: StgCRunAsm.S
+ 
+     c-sources: Adjustor.c
+-               ExecPage.c
+                Arena.c
+                Capability.c
+                CheckUnload.c
+diff --git a/rts/sm/Storage.c b/rts/sm/Storage.c
+index 7d450a8931..c285c03388 100644
+--- a/rts/sm/Storage.c
++++ b/rts/sm/Storage.c
+@@ -1807,6 +1807,179 @@ void flushExec (W_ len, AdjustorExecutable exec_addr)
+ #endif
+ }
+ 
++#if RTS_LINKER_USE_MMAP
++AdjustorWritable allocateWrite(W_ bytes) {
++    return mmapForLinker(bytes, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0);
++}
++
++void markExec(W_ bytes, AdjustorWritable writ) {
++    mmapForLinkerMarkExecutable(writ, bytes);
++}
++
++void freeWrite(W_ bytes, AdjustorWritable writ) {
++    munmap(writ, bytes);
++}
++#endif
++
++#if defined(linux_HOST_OS) || defined(netbsd_HOST_OS)
++
++// On Linux we need to use libffi for allocating executable memory,
++// because it knows how to work around the restrictions put in place
++// by SELinux. The same goes for NetBSD where it is prohibited to
++// mark a page mapping both writable and executable at the same time.
++
++AdjustorWritable allocateExec (W_ bytes, AdjustorExecutable *exec_ret)
++{
++    void **ret, **exec;
++    ACQUIRE_SM_LOCK;
++    ret = ffi_closure_alloc (sizeof(void *) + (size_t)bytes, (void**)&exec);
++    RELEASE_SM_LOCK;
++    if (ret == NULL) return ret;
++    *ret = ret; // save the address of the writable mapping, for freeExec().
++    *exec_ret = exec + 1;
++    return (ret + 1);
++}
++
++// freeExec gets passed the executable address, not the writable address.
++void freeExec (AdjustorExecutable addr)
++{
++    AdjustorWritable writable;
++    writable = *((void**)addr - 1);
++    ACQUIRE_SM_LOCK;
++    ffi_closure_free (writable);
++    RELEASE_SM_LOCK
++}
++
++#elif defined(USE_LIBFFI_FOR_ADJUSTORS) && defined(darwin_HOST_OS)
++
++static HashTable* allocatedExecs;
++
++AdjustorWritable allocateExec(W_ bytes, AdjustorExecutable *exec_ret)
++{
++    AdjustorWritable writ;
++    ffi_closure* cl;
++    // This check is necessary as we can't use allocateExec for anything *but*
++    // ffi_closures on ios/darwin on arm.  libffi does some heavy lifting to
++    // get around the X^W restrictions, and we can't just use this codepath
++    // to allocate generic executable space. For those cases we have to refer
++    // back to allocateWrite/markExec/freeWrite (see above.)
++    if (bytes != sizeof(ffi_closure)) {
++        barf("allocateExec: for ffi_closure only");
++    }
++    ACQUIRE_SM_LOCK;
++    cl = writ = ffi_closure_alloc((size_t)bytes, exec_ret);
++    if (cl != NULL) {
++        if (allocatedExecs == NULL) {
++            allocatedExecs = allocHashTable();
++        }
++        insertHashTable(allocatedExecs, (StgWord)*exec_ret, writ);
++    }
++    RELEASE_SM_LOCK;
++    return writ;
++}
++
++AdjustorWritable execToWritable(AdjustorExecutable exec)
++{
++    AdjustorWritable writ;
++    ACQUIRE_SM_LOCK;
++    if (allocatedExecs == NULL ||
++       (writ = lookupHashTable(allocatedExecs, (StgWord)exec)) == NULL) {
++        RELEASE_SM_LOCK;
++        barf("execToWritable: not found");
++    }
++    RELEASE_SM_LOCK;
++    return writ;
++}
++
++void freeExec(AdjustorExecutable exec)
++{
++    AdjustorWritable writ;
++    ffi_closure* cl;
++    cl = writ = execToWritable(exec);
++    ACQUIRE_SM_LOCK;
++    removeHashTable(allocatedExecs, (StgWord)exec, writ);
++    ffi_closure_free(cl);
++    RELEASE_SM_LOCK
++}
++
++#else
++
++AdjustorWritable allocateExec (W_ bytes, AdjustorExecutable *exec_ret)
++{
++    void *ret;
++    W_ n;
++
++    ACQUIRE_SM_LOCK;
++
++    // round up to words.
++    n  = (bytes + sizeof(W_) + 1) / sizeof(W_);
++
++    if (n+1 > BLOCK_SIZE_W) {
++        barf("allocateExec: can't handle large objects");
++    }
++
++    if (exec_block == NULL ||
++        exec_block->free + n + 1 > exec_block->start + BLOCK_SIZE_W) {
++        bdescr *bd;
++        W_ pagesize = getPageSize();
++        bd = allocGroup(stg_max(1, pagesize / BLOCK_SIZE));
++        debugTrace(DEBUG_gc, "allocate exec block %p", bd->start);
++        bd->gen_no = 0;
++        bd->flags = BF_EXEC;
++        bd->link = exec_block;
++        if (exec_block != NULL) {
++            exec_block->u.back = bd;
++        }
++        bd->u.back = NULL;
++        setExecutable(bd->start, bd->blocks * BLOCK_SIZE, true);
++        exec_block = bd;
++    }
++    *(exec_block->free) = n;  // store the size of this chunk
++    exec_block->gen_no += n;  // gen_no stores the number of words allocated
++    ret = exec_block->free + 1;
++    exec_block->free += n + 1;
++
++    RELEASE_SM_LOCK
++    *exec_ret = ret;
++    return ret;
++}
++
++void freeExec (void *addr)
++{
++    StgPtr p = (StgPtr)addr - 1;
++    bdescr *bd = Bdescr((StgPtr)p);
++
++    if ((bd->flags & BF_EXEC) == 0) {
++        barf("freeExec: not executable");
++    }
++
++    if (*(StgPtr)p == 0) {
++        barf("freeExec: already free?");
++    }
++
++    ACQUIRE_SM_LOCK;
++
++    bd->gen_no -= *(StgPtr)p;
++    *(StgPtr)p = 0;
++
++    if (bd->gen_no == 0) {
++        // Free the block if it is empty, but not if it is the block at
++        // the head of the queue.
++        if (bd != exec_block) {
++            debugTrace(DEBUG_gc, "free exec block %p", bd->start);
++            dbl_link_remove(bd, &exec_block);
++            setExecutable(bd->start, bd->blocks * BLOCK_SIZE, false);
++            freeGroup(bd);
++        } else {
++            bd->free = bd->start;
++        }
++    }
++
++    RELEASE_SM_LOCK
++}
++
++#endif /* switch(HOST_OS) */
++
+ #if defined(DEBUG)
+ 
+ // handy function for use in gdb, because Bdescr() is inlined.

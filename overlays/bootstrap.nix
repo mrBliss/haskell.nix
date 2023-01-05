@@ -201,6 +201,11 @@ in {
                 ++ final.lib.optional (versionAtLeast "8.10.6" && versionLessThan "9.0" && final.stdenv.targetPlatform.isAndroid) ./patches/ghc/libc-memory-symbols.patch
                 ++ final.lib.optional (versionAtLeast "8.10.6" && versionLessThan "9.0" && final.stdenv.targetPlatform.isAndroid) ./patches/ghc/android-base-needs-iconv.patch
                 ++ final.lib.optional (versionAtLeast "8.10"   && versionLessThan "9.4" && final.stdenv.targetPlatform != final.stdenv.hostPlatform) ./patches/ghc/ghc-make-stage-1-lib-ghc.patch
+
+                # Apply the aarch64-linker patches from 8.10 to 9.2, but first revert the related changes that cause problems
+                ++ final.lib.optional (versionAtLeast "9.2"  && versionLessThan "9.4" && final.stdenv.targetPlatform.isAarch64) ./patches/ghc/ghc-9.2-revert-linker-changes.patch
+                ++ final.lib.optional (versionAtLeast "9.2"  && versionLessThan "9.4" && final.stdenv.targetPlatform.isAarch64) ./patches/ghc/ghc-9.2-mmap-next.patch
+                ++ final.lib.optional (versionAtLeast "9.2"  && versionLessThan "9.4" && final.stdenv.targetPlatform.isAarch64) ./patches/ghc/ghc-9.2-m32_alloc.patch
                 ;
         in ({
             ghc865 = final.callPackage ../compiler/ghc (traceWarnOld "8.6" {
